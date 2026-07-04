@@ -1,0 +1,20 @@
+# Node
+node_modules/
+dist/
+
+# Rust
+target/
+
+# Tauri
+src-tauri/gen/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# OpenScene runtime artifacts (never commit user data)
+*.recovery/

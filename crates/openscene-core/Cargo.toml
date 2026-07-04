@@ -1,0 +1,13 @@
+[package]
+name = "openscene-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core engine for OpenScene: Fountain, FDX, pagination, PDF, snapshots, backups"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.37"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
