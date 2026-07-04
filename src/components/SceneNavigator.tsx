@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useApp, useScenes } from "../store";
 import { jumpToElement, replaceEditorScript, setSceneAttrs } from "../editor/editorRef";
+import { captureFlip, playFlip } from "../ui/flip";
 import type { Script } from "../types";
 
-const SCENE_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6", "#a855f7", null];
+// Scene label palette (stored in the .fountain file as data, so these are
+// fixed values, not theme tokens): warm production-report hues that read on
+// all three Backlot themes.
+const SCENE_COLORS = ["#c94f3d", "#d97e2c", "#c9a227", "#7fa650", "#4f7fae", "#9a6fb0", null];
 
 /** Move the whole scene (heading..before next heading) safely by rebuilding
  *  the element array; the editor document is replaced in one undoable step. */
@@ -33,6 +37,7 @@ export function SceneNavigator() {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [colorPickerFor, setColorPickerFor] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const drop = (to: number) => {
     if (dragFrom === null || dragFrom === to) {
@@ -40,19 +45,25 @@ export function SceneNavigator() {
       setDragOver(null);
       return;
     }
+    // FLIP: capture positions, reorder, then glide items to their new slots.
+    const snapshot = captureFlip(listRef.current);
     replaceEditorScript(reorderScenes(script, dragFrom, to));
+    requestAnimationFrame(() => playFlip(listRef.current, snapshot));
     setDragFrom(null);
     setDragOver(null);
   };
 
   return (
     <div className="panel" role="navigation" aria-label="Scene navigator">
-      <div className="panel-header">Scenes</div>
-      <div className="panel-body">
+      <div className="panel-header">
+        Scenes <span className="edgecode">{String(scenes.length).padStart(3, "0")}</span>
+      </div>
+      <div className="panel-body" ref={listRef}>
         {scenes.length === 0 && <div className="panel-empty">No scenes yet. Type INT. or EXT. to start one.</div>}
         {scenes.map((scene, i) => (
           <div
             key={`${scene.elementIndex}-${i}`}
+            data-flip-key={`${scene.number}-${scene.heading}`}
             className={`scene-item${dragOver === i ? " drag-over" : ""}`}
             draggable
             onDragStart={() => setDragFrom(i)}

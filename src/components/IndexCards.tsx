@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useApp, useScenes } from "../store";
 import { jumpToElement, replaceEditorScript, setSceneAttrs } from "../editor/editorRef";
+import { captureFlip, playFlip } from "../ui/flip";
 import { reorderScenes } from "./SceneNavigator";
 
 export function IndexCards() {
@@ -9,22 +10,26 @@ export function IndexCards() {
   const setView = useApp((s) => s.setView);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const drop = (to: number) => {
     if (dragFrom !== null && dragFrom !== to) {
+      const snapshot = captureFlip(gridRef.current);
       replaceEditorScript(reorderScenes(script, dragFrom, to));
+      requestAnimationFrame(() => playFlip(gridRef.current, snapshot));
     }
     setDragFrom(null);
     setDragOver(null);
   };
 
   return (
-    <div className="cards-view" role="main" aria-label="Index cards">
-      <div className="cards-grid">
+    <div className="cards-view view-enter" role="main" aria-label="Index cards">
+      <div className="cards-grid" ref={gridRef}>
         {scenes.length === 0 && <div className="panel-empty">No scenes yet.</div>}
         {scenes.map((scene, i) => (
           <div
             key={`${scene.elementIndex}-${i}`}
+            data-flip-key={`${scene.number}-${scene.heading}`}
             className={`index-card${dragOver === i ? " drag-over" : ""}`}
             draggable
             onDragStart={() => setDragFrom(i)}

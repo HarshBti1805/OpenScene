@@ -1,20 +1,24 @@
 import { useApp, useScenes } from "../store";
 
 export function Toolbar() {
-  const meta = useApp((s) => s.projectMeta);
   const view = useApp((s) => s.view);
   const setView = useApp((s) => s.setView);
   const panel = useApp((s) => s.panel);
   const togglePanel = useApp((s) => s.togglePanel);
   const setPaletteOpen = useApp((s) => s.setPaletteOpen);
+  const setFormatOpen = useApp((s) => s.setFormatOpen);
   const closeProject = useApp((s) => s.closeProject);
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Main toolbar">
-      <button className="btn btn-small" onClick={() => closeProject()} aria-label="Close project, back to start">
-        ‹ Projects
+      <button
+        className="btn btn-small btn-ghost"
+        onClick={() => closeProject()}
+        aria-label="Close project, back to start"
+        data-tip="Back to projects"
+      >
+        ‹ Lot
       </button>
-      <span className="toolbar-title">{meta?.name}</span>
       <div className="toolbar-group" role="group" aria-label="View switcher">
         <button
           className={`btn btn-small${view === "write" ? " active" : ""}`}
@@ -51,7 +55,20 @@ export function Toolbar() {
           </button>
         ))}
       </div>
-      <button className="btn btn-small" onClick={() => setPaletteOpen(true)} aria-label="Open command palette">
+      <button
+        className="btn btn-small"
+        onClick={() => setFormatOpen(true)}
+        aria-label="Format and appearance settings"
+        data-tip="Format & Appearance"
+      >
+        Aa
+      </button>
+      <button
+        className="btn btn-small"
+        onClick={() => setPaletteOpen(true)}
+        aria-label="Open command palette"
+        data-tip="Command palette"
+      >
         ⌘K
       </button>
     </div>
@@ -65,17 +82,17 @@ export function StatusBar() {
   const lastSaved = useApp((s) => s.lastSaved);
   const statusMessage = useApp((s) => s.statusMessage);
   const typewriter = useApp((s) => s.typewriter);
+  const lineFocus = useApp((s) => s.lineFocus);
 
   return (
     <div className="statusbar" role="status" aria-live="polite">
-      <span>{pageMap ? `${pageMap.page_count} page${pageMap.page_count === 1 ? "" : "s"}` : "…"}</span>
-      <span>
-        {scenes.length} scene{scenes.length === 1 ? "" : "s"}
-      </span>
+      <span>{pageMap ? `${pageMap.page_count} pp` : "· · ·"}</span>
+      <span>{scenes.length} sc</span>
       {typewriter && <span>typewriter</span>}
+      {lineFocus && <span>focus</span>}
       <span className="toolbar-spacer" />
       {statusMessage && <span className="status-msg">{statusMessage}</span>}
-      <span>{dirty ? "Unsaved changes…" : lastSaved ? `Saved ${lastSaved}` : "Saved"}</span>
+      <span>{dirty ? "unsaved" : lastSaved ? `saved ${lastSaved}` : "saved"}</span>
     </div>
   );
 }

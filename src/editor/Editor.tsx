@@ -15,6 +15,7 @@ import {
 } from "./commands";
 import { smartTypePlugin } from "./smarttype";
 import { paginationPlugin } from "./pagination";
+import { lineFocusPlugin } from "./lineFocus";
 import { setEditorView } from "./editorRef";
 import { useApp } from "../store";
 import type { ElementKind } from "../types";
@@ -33,6 +34,13 @@ export function Editor() {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const projectPath = useApp((s) => s.projectPath);
+  const lineFocus = useApp((s) => s.lineFocus);
+
+  // Re-evaluate the line-focus decoration when the toggle flips.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) view.dispatch(view.state.tr.setMeta("line-focus-toggle", true));
+  }, [lineFocus]);
 
   useEffect(() => {
     if (!hostRef.current || !projectPath) return;
@@ -65,6 +73,7 @@ export function Editor() {
         keymap(baseKeymap),
         smartTypePlugin(),
         pagination.plugin,
+        lineFocusPlugin(() => useApp.getState().lineFocus),
       ],
     });
 
@@ -105,7 +114,7 @@ export function Editor() {
   }, [projectPath]);
 
   return (
-    <div className="editor-scroll" id="editor-scroll">
+    <div className={`editor-scroll${lineFocus ? " line-focus" : ""}`} id="editor-scroll">
       <div ref={hostRef} className="editor-host" />
     </div>
   );

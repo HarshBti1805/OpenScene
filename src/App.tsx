@@ -13,6 +13,8 @@ import { CommandPalette } from "./components/CommandPalette";
 import { FindReplace } from "./components/FindReplace";
 import { TitlePageEditor } from "./components/TitlePageEditor";
 import { RenameDialog } from "./components/RenameDialog";
+import { FormatPanel } from "./components/FormatPanel";
+import { Titlebar } from "./components/Titlebar";
 import { Toolbar, StatusBar } from "./components/Toolbar";
 
 const AUTOSAVE_MS = 2000;
@@ -104,18 +106,23 @@ export default function App() {
 
   if (view === "start") {
     return (
-      <>
-        <StartScreen />
+      <div className="app-shell">
+        <Titlebar />
+        <div className="app-main" style={{ display: "block", overflow: "hidden" }}>
+          <StartScreen />
+        </div>
         <CommandPalette />
-      </>
+        <FormatPanel />
+      </div>
     );
   }
 
   return (
     <div className={`app-shell${distractionFree ? " distraction-free" : ""}`}>
+      <Titlebar />
       <Toolbar />
       <FindReplace />
-      <div className="app-main">
+      <div className="app-main view-enter">
         {panel === "navigator" && <SceneNavigator />}
         {panel === "notes" && <NotesPanel />}
         {panel === "stats" && <StatsPanel />}
@@ -133,6 +140,7 @@ export default function App() {
       <CommandPalette />
       <TitlePageEditor />
       <RenameDialog />
+      <FormatPanel />
     </div>
   );
 }
