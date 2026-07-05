@@ -1,4 +1,5 @@
 import { useApp, useScenes } from "../store";
+import { t } from "../i18n";
 
 export function Toolbar() {
   const view = useApp((s) => s.view);
@@ -10,39 +11,40 @@ export function Toolbar() {
   const closeProject = useApp((s) => s.closeProject);
 
   return (
-    <div className="toolbar" role="toolbar" aria-label="Main toolbar">
+    <div className="toolbar" role="toolbar" aria-label={t("toolbar.script")}>
       <button
         className="btn btn-small btn-ghost"
         onClick={() => closeProject()}
-        aria-label="Close project, back to start"
-        data-tip="Back to projects"
+        aria-label={t("toolbar.backToProjects")}
+        data-tip={t("toolbar.backToProjects")}
       >
-        ‹ Lot
+        {t("toolbar.lot")}
       </button>
-      <div className="toolbar-group" role="group" aria-label="View switcher">
+      <div className="toolbar-group" role="group" aria-label={t("toolbar.script")}>
         <button
           className={`btn btn-small${view === "write" ? " active" : ""}`}
           onClick={() => setView("write")}
           aria-pressed={view === "write"}
         >
-          Script
+          {t("toolbar.script")}
         </button>
         <button
           className={`btn btn-small${view === "cards" ? " active" : ""}`}
           onClick={() => setView("cards")}
           aria-pressed={view === "cards"}
         >
-          Cards
+          {t("toolbar.cards")}
         </button>
       </div>
       <div className="toolbar-spacer" />
-      <div className="toolbar-group" role="group" aria-label="Panels">
+      <div className="toolbar-group" role="group" aria-label={t("panel.documents")}>
         {(
           [
-            ["navigator", "Scenes"],
-            ["notes", "Notes"],
-            ["stats", "Stats"],
-            ["snapshots", "Versions"],
+            ["navigator", t("toolbar.scenes")],
+            ["notes", t("toolbar.notes")],
+            ["stats", t("toolbar.stats")],
+            ["snapshots", t("toolbar.versions")],
+            ["revisions", t("panel.revisions")],
           ] as const
         ).map(([p, label]) => (
           <button
@@ -58,16 +60,16 @@ export function Toolbar() {
       <button
         className="btn btn-small"
         onClick={() => setFormatOpen(true)}
-        aria-label="Format and appearance settings"
-        data-tip="Format & Appearance"
+        aria-label={t("toolbar.formatSettings")}
+        data-tip={t("toolbar.formatSettings")}
       >
         Aa
       </button>
       <button
         className="btn btn-small"
         onClick={() => setPaletteOpen(true)}
-        aria-label="Open command palette"
-        data-tip="Command palette"
+        aria-label={t("toolbar.palette")}
+        data-tip={t("toolbar.palette")}
       >
         ⌘K
       </button>
@@ -83,16 +85,18 @@ export function StatusBar() {
   const statusMessage = useApp((s) => s.statusMessage);
   const typewriter = useApp((s) => s.typewriter);
   const lineFocus = useApp((s) => s.lineFocus);
+  const locked = useApp((s) => s.projectMeta?.locked ?? null);
 
   return (
     <div className="statusbar" role="status" aria-live="polite">
-      <span>{pageMap ? `${pageMap.page_count} pp` : "· · ·"}</span>
-      <span>{scenes.length} sc</span>
-      {typewriter && <span>typewriter</span>}
-      {lineFocus && <span>focus</span>}
+      <span>{pageMap ? t("status.pages", { n: pageMap.page_count }) : "· · ·"}</span>
+      <span>{t("status.scenes", { n: scenes.length })}</span>
+      {locked && <span className="status-locked">{t("status.locked")}</span>}
+      {typewriter && <span>{t("status.typewriter")}</span>}
+      {lineFocus && <span>{t("status.focus")}</span>}
       <span className="toolbar-spacer" />
       {statusMessage && <span className="status-msg">{statusMessage}</span>}
-      <span>{dirty ? "unsaved" : lastSaved ? `saved ${lastSaved}` : "saved"}</span>
+      <span>{dirty ? t("status.unsaved") : lastSaved ? t("status.savedAt", { time: lastSaved }) : t("status.saved")}</span>
     </div>
   );
 }

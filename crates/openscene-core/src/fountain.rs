@@ -8,6 +8,7 @@
 //! Superset conventions (all remain readable as plain Fountain):
 //! - Scene color is stored as an inline note `[[color: blue]]` on the heading.
 //! - Inline notes may carry a category: `[[category: text]]`.
+//! - Revision marks are `[[rev: <set-id>]]` markers on the element.
 //! - Shots are uppercase lines recognized by common shot keywords.
 
 use crate::model::{is_uppercase_line, DualSide, Element, ElementKind, Note, Script, TitlePage};
@@ -274,14 +275,44 @@ pub fn parse(input: &str) -> Script {
             i += 1;
             continue;
         }
-        // Sections (`# Act One`) carry no formatting; skipped by design.
+        // Sections (`# Act One`) materialize as act headers.
         if trimmed.starts_with('#') {
+            let text = trimmed.trim_start_matches('#').trim();
+            let (clean, notes) = extract_notes(text);
+            let mut e = Element::new(ElementKind::ActHeader, clean.to_uppercase());
+            e.notes = notes;
+            elements.push(e);
             i += 1;
             continue;
         }
-        // Forced scene heading: leading `.` (but not `...`)
+        // Lyrics: `~sung line` (Fountain standard).
+        if trimmed.starts_with('~') {
+            let mut lines_acc: Vec<String> = Vec::new();
+            while i < n {
+                let l = lines[i].trim();
+                if let Some(rest) = l.strip_prefix('~') {
+                    lines_acc.push(rest.trim_start().to_string());
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            let (clean, notes) = extract_notes(&lines_acc.join("\n"));
+            let mut e = Element::new(ElementKind::Lyrics, clean);
+            e.notes = notes;
+            elements.push(e);
+            continue;
+        }
+        // Forced scene heading: leading `.` (but not `...`).
+        // `.OMITTED #12#` is the superset form of an omitted locked scene.
         if trimmed.starts_with('.') && !trimmed.starts_with("..") {
             push_scene_heading(&mut elements, trimmed[1..].trim());
+            if let Some(last) = elements.last_mut() {
+                if last.kind == ElementKind::SceneHeading && last.text == "OMITTED" {
+                    last.kind = ElementKind::Omitted;
+                    last.text = String::new();
+                }
+            }
             i += 1;
             continue;
         }
@@ -318,7 +349,10 @@ pub fn parse(input: &str) -> Script {
         }
         // Forced transition: `> text`
         if let Some(rest) = trimmed.strip_prefix('>') {
-            elements.push(Element::new(ElementKind::Transition, rest.trim()));
+            let (clean, notes) = extract_notes(rest.trim());
+            let mut e = Element::new(ElementKind::Transition, clean);
+            e.notes = notes;
+            elements.push(e);
             i += 1;
             continue;
         }
@@ -380,7 +414,30 @@ pub fn parse(input: &str) -> Script {
             };
             while i < n && !lines[i].trim().is_empty() {
                 let l = lines[i].trim();
-                if l.starts_with('(') && l.ends_with(')') {
+                // Lyrics inside a speech: consecutive `~` lines.
+                if l.starts_with('~') {
+                    flush_dlg(&mut dlg_lines, &mut elements, dual);
+                    let mut ly: Vec<String> = Vec::new();
+                    while i < n {
+                        let ll = lines[i].trim();
+                        if let Some(rest) = ll.strip_prefix('~') {
+                            ly.push(rest.trim_start().to_string());
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let (clean, notes) = extract_notes(&ly.join("\n"));
+                    let mut e = Element::new(ElementKind::Lyrics, clean);
+                    e.notes = notes;
+                    e.dual = dual;
+                    elements.push(e);
+                    continue;
+                }
+                // Shape test ignores [[...]] markers so a trailing revision
+                // marker doesn't stop a parenthetical from being recognized.
+                let shape = extract_notes(l).0;
+                if shape.starts_with('(') && shape.ends_with(')') {
                     flush_dlg(&mut dlg_lines, &mut elements, dual);
                     let (clean, notes) = extract_notes(l);
                     let mut p = Element::new(ElementKind::Parenthetical, clean);
@@ -400,8 +457,8 @@ pub fn parse(input: &str) -> Script {
             flush_dlg(&mut dlg_lines, &mut elements, dual);
             continue;
         }
-        // Shot heuristic
-        if prev_blank && next_blank && is_shot_text(trimmed) {
+        // Shot heuristic (shape test ignores [[...]] markers).
+        if prev_blank && next_blank && is_shot_text(extract_notes(trimmed).0.trim()) {
             let (clean, notes) = extract_notes(trimmed);
             let mut e = Element::new(ElementKind::Shot, clean);
             e.notes = notes;
@@ -423,9 +480,32 @@ pub fn parse(input: &str) -> Script {
         elements.push(e);
     }
 
+    // Post-pass: lift `[[rev: id]]` markers out of notes into `revision`.
+    for e in &mut elements {
+        let mut revision = None;
+        e.notes.retain(|n| {
+            if n.category.eq_ignore_ascii_case("rev") {
+                revision = Some(n.text.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if revision.is_some() {
+            e.revision = revision;
+        }
+    }
+
     Script {
         title_page,
         elements,
+    }
+}
+
+fn rev_marker(e: &Element) -> String {
+    match &e.revision {
+        Some(r) => format!(" [[rev: {}]]", r),
+        None => String::new(),
     }
 }
 
@@ -485,8 +565,11 @@ pub fn serialize(script: &Script) -> String {
         let in_speech = matches!(
             (prev_kind, e.kind),
             (
-                Some(ElementKind::Character) | Some(ElementKind::Parenthetical) | Some(ElementKind::Dialogue),
-                ElementKind::Parenthetical | ElementKind::Dialogue
+                Some(ElementKind::Character)
+                    | Some(ElementKind::Parenthetical)
+                    | Some(ElementKind::Dialogue)
+                    | Some(ElementKind::Lyrics),
+                ElementKind::Parenthetical | ElementKind::Dialogue | ElementKind::Lyrics
             )
         ) && prev_dual == e.dual;
         if prev_kind.is_some() && !in_speech {
@@ -498,6 +581,7 @@ pub fn serialize(script: &Script) -> String {
                 if let Some(c) = &e.color {
                     text.push_str(&format!(" [[color: {}]]", c));
                 }
+                text.push_str(&rev_marker(e));
                 if !is_scene_heading_text(&e.text) {
                     out.push('.');
                 }
@@ -515,7 +599,8 @@ pub fn serialize(script: &Script) -> String {
                 }
             }
             ElementKind::Action => {
-                let text = inject_notes(&e.text, &e.notes);
+                let mut text = inject_notes(&e.text, &e.notes);
+                text.push_str(&rev_marker(e));
                 for l in text.lines() {
                     // Escape lines that would misparse as another element.
                     let needs_bang = is_scene_heading_text(l)
@@ -537,7 +622,9 @@ pub fn serialize(script: &Script) -> String {
                 }
             }
             ElementKind::Character => {
-                let text = inject_notes(&e.text, &e.notes);
+                let mut text = inject_notes(&e.text, &e.notes);
+                text.push_str(&rev_marker(e));
+                // Markers make the line non-uppercase: force with '@'.
                 if !is_character_line(&text) {
                     out.push('@');
                 }
@@ -552,11 +639,13 @@ pub fn serialize(script: &Script) -> String {
                 if !text.starts_with('(') {
                     text = format!("({})", text);
                 }
+                text.push_str(&rev_marker(e));
                 out.push_str(&text);
                 out.push('\n');
             }
             ElementKind::Dialogue => {
-                let text = inject_notes(&e.text, &e.notes);
+                let mut text = inject_notes(&e.text, &e.notes);
+                text.push_str(&rev_marker(e));
                 for l in text.lines() {
                     if l.is_empty() {
                         out.push_str("  \n");
@@ -570,21 +659,51 @@ pub fn serialize(script: &Script) -> String {
                 }
             }
             ElementKind::Transition => {
-                if is_transition_text(&e.text) {
+                let has_markers = !e.notes.is_empty() || e.revision.is_some();
+                if is_transition_text(&e.text) && !has_markers {
                     out.push_str(&e.text);
                 } else {
+                    // Markers force the explicit form so the shape survives.
                     out.push_str("> ");
-                    out.push_str(&e.text);
+                    out.push_str(&inject_notes(&e.text, &e.notes));
+                    out.push_str(&rev_marker(e));
                 }
                 out.push('\n');
             }
             ElementKind::Shot => {
-                let text = inject_notes(&e.text, &e.notes).to_uppercase();
+                let mut text = inject_notes(&e.text, &e.notes).to_uppercase();
+                text.push_str(&rev_marker(e));
                 out.push_str(&text);
                 out.push('\n');
             }
             ElementKind::PageBreak => {
                 out.push_str("===\n");
+            }
+            ElementKind::ActHeader => {
+                out.push_str("# ");
+                out.push_str(&inject_notes(&e.text, &e.notes).to_uppercase());
+                out.push_str(&rev_marker(e));
+                out.push('\n');
+            }
+            ElementKind::Lyrics => {
+                let mut text = inject_notes(&e.text, &e.notes);
+                text.push_str(&rev_marker(e));
+                for l in text.lines() {
+                    out.push('~');
+                    out.push_str(l);
+                    out.push('\n');
+                }
+                if text.is_empty() {
+                    out.push_str("~\n");
+                }
+            }
+            ElementKind::Omitted => {
+                out.push_str(".OMITTED");
+                out.push_str(&rev_marker(e));
+                if let Some(num) = &e.scene_number {
+                    out.push_str(&format!(" #{}#", num));
+                }
+                out.push('\n');
             }
         }
         prev_kind = Some(e.kind);
@@ -751,6 +870,89 @@ mod tests {
         let text = serialize(&script);
         let reparsed = parse(&text);
         assert_eq!(script, reparsed, "fountain round trip must be lossless:\n{}", text);
+    }
+
+    #[test]
+    fn act_headers_and_lyrics_round_trip() {
+        let mut script = Script::default();
+        script.elements.push(el(ElementKind::ActHeader, "ACT ONE"));
+        script.elements.push(el(ElementKind::SceneHeading, "INT. STAGE - NIGHT"));
+        script.elements.push(el(ElementKind::Character, "MAYA"));
+        script.elements.push(el(ElementKind::Lyrics, "The lights go down\nAnd we begin"));
+        script.elements.push(el(ElementKind::ActHeader, "END OF ACT ONE"));
+        let text = serialize(&script);
+        assert!(text.contains("# ACT ONE"), "{}", text);
+        assert!(text.contains("~The lights go down"), "{}", text);
+        let back = parse(&text);
+        assert_eq!(script, back, "{}", text);
+    }
+
+    #[test]
+    fn legacy_sections_materialize_as_act_headers() {
+        let s = parse("# Act One\n\nINT. A - DAY\n\nAction.\n");
+        assert_eq!(s.elements[0].kind, ElementKind::ActHeader);
+        assert_eq!(s.elements[0].text, "ACT ONE");
+        assert_eq!(s.elements[1].kind, ElementKind::SceneHeading);
+    }
+
+    #[test]
+    fn omitted_scene_round_trips() {
+        let mut script = Script::default();
+        script.elements.push(el(ElementKind::SceneHeading, "INT. A - DAY"));
+        script.elements.push(el(ElementKind::Action, "One."));
+        let mut om = el(ElementKind::Omitted, "");
+        om.scene_number = Some("2".into());
+        script.elements.push(om);
+        script.elements.push(el(ElementKind::SceneHeading, "INT. C - DAY"));
+        script.elements.push(el(ElementKind::Action, "Three."));
+        let text = serialize(&script);
+        assert!(text.contains(".OMITTED #2#"), "{}", text);
+        let back = parse(&text);
+        assert_eq!(script, back, "{}", text);
+    }
+
+    #[test]
+    fn revision_marks_round_trip_on_every_kind() {
+        let mut script = Script::default();
+        let kinds = [
+            (ElementKind::SceneHeading, "INT. LAB - NIGHT"),
+            (ElementKind::Action, "Sparks fly."),
+            (ElementKind::Shot, "CLOSE ON MAYA"),
+            (ElementKind::Character, "MAYA"),
+            (ElementKind::Parenthetical, "(quietly)"),
+            (ElementKind::Dialogue, "It's alive."),
+            (ElementKind::Transition, "CUT TO:"),
+        ];
+        for (kind, text) in kinds {
+            let mut e = el(kind, text);
+            e.revision = Some("blue-1".into());
+            script.elements.push(e);
+        }
+        let text = serialize(&script);
+        let back = parse(&text);
+        assert_eq!(script, back, "revision marks must round-trip:\n{}", text);
+    }
+
+    #[test]
+    fn revision_marker_survives_next_to_notes_and_color() {
+        let mut script = Script::default();
+        let mut h = el(ElementKind::SceneHeading, "INT. LAB - NIGHT");
+        h.color = Some("blue".into());
+        h.revision = Some("r2".into());
+        h.scene_number = Some("12".into());
+        script.elements.push(h);
+        script.elements.push(el(ElementKind::Character, "MAYA"));
+        let mut d = el(ElementKind::Dialogue, "Careful now.");
+        d.revision = Some("r2".into());
+        d.notes.push(Note {
+            offset: 8,
+            category: "note".into(),
+            text: "too slow?".into(),
+        });
+        script.elements.push(d);
+        let text = serialize(&script);
+        let back = parse(&text);
+        assert_eq!(script, back, "{}", text);
     }
 
     #[test]

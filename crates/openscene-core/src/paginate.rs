@@ -27,7 +27,7 @@
 //! - Action may break anywhere between lines, but never leaves a single
 //!   orphan line when it starts near the very bottom of a page (needs 2 lines).
 
-use crate::model::{DualSide, Element, ElementKind, LayoutOptions, SceneNumbering, Script};
+use crate::model::{Align, DualSide, Element, ElementKind, FormatSpec, LayoutOptions, LockedState, SceneNumbering, Script};
 use serde::{Deserialize, Serialize};
 
 pub const PAGE_COLS: usize = 85;
@@ -65,6 +65,8 @@ pub enum LineKind {
     Shot,
     More,
     DualColumns,
+    ActHeader,
+    Lyrics,
 }
 
 /// One laid-out physical line.
@@ -85,6 +87,12 @@ pub struct Line {
     /// Scene number to print in the margins (scene heading lines only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_number: Option<String>,
+    /// Line belongs to an element carrying a revision mark (margin asterisk).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revised: bool,
+    /// Draw an underline (act headers, multicam sluglines).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
 }
 
 impl Line {
@@ -97,6 +105,8 @@ impl Line {
             right_col: None,
             element: None,
             scene_number: None,
+            revised: false,
+            underline: false,
         }
     }
     fn text_line(kind: LineKind, col: usize, text: String, element: Option<usize>) -> Self {
@@ -108,13 +118,20 @@ impl Line {
             right_col: None,
             element,
             scene_number: None,
+            revised: false,
+            underline: false,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page {
+    /// Physical ordinal (1-based position in the output).
     pub number: usize,
+    /// Printed page label: equals the ordinal when unlocked; locked pages
+    /// keep their frozen labels and overflow becomes "12A", "12B", ...
+    #[serde(default)]
+    pub label: String,
     pub lines: Vec<Line>,
 }
 
@@ -123,13 +140,40 @@ pub struct Layout {
     pub pages: Vec<Page>,
 }
 
+/// A dialogue speech split across a page boundary (MORE/CONT'D point).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DialogueSplit {
+    /// Index of the Dialogue element that was split.
+    pub element: usize,
+    /// Number of NON-whitespace characters of the element's text that stay
+    /// on the earlier page. Whitespace-insensitive so word-wrap joining
+    /// can't skew the offset; the editor maps it back to a text position.
+    pub nonws_chars: usize,
+    /// 1-based page number that begins at this split (the CONT'D page).
+    pub next_page: usize,
+    /// The re-cue printed on the next page, e.g. `MAYA (CONT'D)`.
+    pub cont_cue: String,
+    /// Printed label of the page that begins at this split.
+    #[serde(default)]
+    pub next_label: String,
+}
+
 /// Summary used by the editor: for each element, which page it starts on,
-/// plus the (element, line-offset) positions where page breaks fall.
+/// plus exact mid-dialogue split points for MORE/CONT'D display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageMap {
     /// element index -> 1-based page number the element starts on
     pub element_pages: Vec<usize>,
     pub page_count: usize,
+    #[serde(default)]
+    pub dialogue_splits: Vec<DialogueSplit>,
+    /// Printed label per physical page (index = ordinal - 1).
+    #[serde(default)]
+    pub page_labels: Vec<String>,
+    /// Display scene number per element (headings and OMITTED only),
+    /// including locked A-numbers derived for new scenes.
+    #[serde(default)]
+    pub scene_numbers: Vec<Option<String>>,
 }
 
 /// Greedy word wrap preserving explicit newlines. Never returns empty vec.
@@ -216,6 +260,11 @@ struct Block {
     force_break_before: bool,
     /// Number of blank lines to emit before this block (element spacing).
     space_before: usize,
+    /// Index of the first script element this block renders (partitioning).
+    first_element: usize,
+    /// Locked page labels that start at this block. All but the last emit
+    /// empty placeholder pages (anchors whose content was deleted).
+    locked_labels: Vec<String>,
 }
 
 struct SpeechInfo {
@@ -280,17 +329,195 @@ pub fn cue_base(cue: &str) -> String {
     }
 }
 
-fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
+/// Display scene numbers per element (headings and OMITTED only).
+/// Unlocked: explicit numbers win, gaps auto-count. Locked: explicit numbers
+/// win, new scenes derive A-numbers from the previous scene ("12" -> "12A",
+/// "12A" -> "12B"), skipping collisions.
+pub fn assign_scene_numbers(script: &Script, locked: Option<&LockedState>) -> Vec<Option<String>> {
+    assign_scene_numbers_fmt(script, locked, false)
+}
+
+/// Lettered numbering (multicam A, B, C…) when `lettered` and unlocked.
+pub fn assign_scene_numbers_fmt(
+    script: &Script,
+    locked: Option<&LockedState>,
+    lettered: bool,
+) -> Vec<Option<String>> {
+    let mut out: Vec<Option<String>> = vec![None; script.elements.len()];
+    let mut used: std::collections::HashSet<String> = script
+        .elements
+        .iter()
+        .filter_map(|e| e.scene_number.clone())
+        .collect();
+    let mut auto = 0usize;
+    let mut prev: Option<String> = None;
+    for (i, e) in script.elements.iter().enumerate() {
+        if e.kind != ElementKind::SceneHeading && e.kind != ElementKind::Omitted {
+            continue;
+        }
+        auto += 1;
+        let number = if let Some(n) = &e.scene_number {
+            n.clone()
+        } else if locked.is_some() {
+            let base = prev.clone().unwrap_or_default();
+            let mut candidate = next_locked_number(&base);
+            while used.contains(&candidate) {
+                candidate = next_locked_number(&candidate);
+            }
+            used.insert(candidate.clone());
+            candidate
+        } else if lettered {
+            letter_label(auto - 1)
+        } else {
+            auto.to_string()
+        };
+        prev = Some(number.clone());
+        out[i] = Some(number);
+    }
+    out
+}
+
+/// "12" -> "12A", "12A" -> "12B", "12Z" -> "12AA", "" -> "A1".
+fn next_locked_number(base: &str) -> String {
+    if base.is_empty() {
+        return "A1".to_string();
+    }
+    let trailing: String = base.chars().rev().take_while(|c| c.is_ascii_alphabetic()).collect();
+    let stem_len = base.len() - trailing.len();
+    let stem = &base[..stem_len];
+    if trailing.is_empty() {
+        return format!("{}A", stem);
+    }
+    // Increment the letter suffix like a base-26 counter (A..Z, AA..).
+    let mut letters: Vec<char> = trailing.chars().rev().collect();
+    let mut idx = letters.len();
+    loop {
+        if idx == 0 {
+            letters.insert(0, 'A');
+            break;
+        }
+        idx -= 1;
+        if letters[idx] == 'Z' {
+            letters[idx] = 'A';
+        } else {
+            letters[idx] = ((letters[idx] as u8) + 1) as char;
+            break;
+        }
+    }
+    format!("{}{}", stem, letters.into_iter().collect::<String>())
+}
+
+/// 0 -> "A", 25 -> "Z", 26 -> "AA" (multicam scene lettering).
+pub fn letter_label(mut n: usize) -> String {
+    let mut out = Vec::new();
+    loop {
+        out.push((b'A' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    out.into_iter().rev().collect()
+}
+
+fn aligned_col(fmt: &crate::model::ElementFormat, text: &str) -> usize {
+    let len = text.chars().count();
+    match fmt.align {
+        Align::Left => fmt.indent_cols,
+        Align::Center => (PAGE_COLS.saturating_sub(len)) / 2,
+        Align::Right => (fmt.indent_cols + fmt.width_cols).saturating_sub(len),
+    }
+}
+
+fn cased(fmt: &crate::model::ElementFormat, text: &str) -> String {
+    if fmt.uppercase {
+        text.to_uppercase()
+    } else {
+        text.to_string()
+    }
+}
+
+fn build_blocks(
+    script: &Script,
+    opts: &LayoutOptions,
+    numbers: &[Option<String>],
+    fmt: &FormatSpec,
+) -> Vec<Block> {
     let (num_left, num_right) = scene_number_columns(opts.scene_numbering);
     let mut blocks: Vec<Block> = Vec::new();
     let elements = &script.elements;
-    let mut auto_scene_number = 0usize;
     let mut i = 0usize;
     let mut first_content = true;
+    let mut seen_scene = false;
 
     while i < elements.len() {
         let e = &elements[i];
         match e.kind {
+            ElementKind::ActHeader => {
+                let text = cased(&fmt.act_header, &e.text);
+                let mut lines: Vec<Line> = wrap(&text, fmt.act_header.width_cols)
+                    .into_iter()
+                    .map(|l| {
+                        let col = aligned_col(&fmt.act_header, &l);
+                        Line::text_line(LineKind::ActHeader, col, l, Some(i))
+                    })
+                    .collect();
+                for l in &mut lines {
+                    l.underline = fmt.act_header.underline;
+                }
+                blocks.push(Block {
+                    lines,
+                    keep_with_next: true,
+                    speech: None,
+                    splittable_action: false,
+                    force_break_before: false,
+                    space_before: if first_content { 0 } else { fmt.act_header.space_before },
+                    first_element: i,
+                    locked_labels: Vec::new(),
+                });
+                first_content = false;
+                i += 1;
+            }
+            ElementKind::Lyrics => {
+                let lines: Vec<Line> = wrap(&cased(&fmt.lyrics, &e.text), fmt.lyrics.width_cols)
+                    .into_iter()
+                    .map(|l| {
+                        let col = aligned_col(&fmt.lyrics, &l);
+                        Line::text_line(LineKind::Lyrics, col, l, Some(i))
+                    })
+                    .collect();
+                blocks.push(Block {
+                    lines,
+                    keep_with_next: false,
+                    speech: None,
+                    splittable_action: false,
+                    force_break_before: false,
+                    space_before: if first_content { 0 } else { fmt.lyrics.space_before.max(0) },
+                    first_element: i,
+                    locked_labels: Vec::new(),
+                });
+                first_content = false;
+                i += 1;
+            }
+            ElementKind::Omitted => {
+                let number = numbers.get(i).cloned().flatten();
+                let mut line = Line::text_line(LineKind::SceneHeading, ACTION_COL, "OMITTED".into(), Some(i));
+                if num_left || num_right {
+                    line.scene_number = number;
+                }
+                blocks.push(Block {
+                    lines: vec![line],
+                    keep_with_next: false,
+                    speech: None,
+                    splittable_action: false,
+                    force_break_before: false,
+                    space_before: if first_content { 0 } else { 2 },
+                    first_element: i,
+                    locked_labels: Vec::new(),
+                });
+                first_content = false;
+                i += 1;
+            }
             ElementKind::PageBreak => {
                 blocks.push(Block {
                     lines: vec![],
@@ -299,18 +526,21 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     splittable_action: false,
                     force_break_before: true,
                     space_before: 0,
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 i += 1;
             }
             ElementKind::SceneHeading => {
-                auto_scene_number += 1;
-                let number = e
-                    .scene_number
-                    .clone()
-                    .unwrap_or_else(|| auto_scene_number.to_string());
+                let number = numbers.get(i).cloned().flatten().unwrap_or_default();
                 let mut lines = Vec::new();
-                for (li, l) in wrap(&e.text, ACTION_WIDTH).into_iter().enumerate() {
-                    let mut line = Line::text_line(LineKind::SceneHeading, ACTION_COL, l, Some(i));
+                for (li, l) in wrap(&cased(&fmt.scene_heading, &e.text), fmt.scene_heading.width_cols)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let col = aligned_col(&fmt.scene_heading, &l);
+                    let mut line = Line::text_line(LineKind::SceneHeading, col, l, Some(i));
+                    line.underline = fmt.scene_heading.underline;
                     if li == 0 && (num_left || num_right) {
                         line.scene_number = Some(number.clone());
                     }
@@ -321,16 +551,22 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     keep_with_next: true,
                     speech: None,
                     splittable_action: false,
-                    force_break_before: false,
-                    space_before: if first_content { 0 } else { 2 },
+                    force_break_before: fmt.scene_per_page && seen_scene,
+                    space_before: if first_content { 0 } else { fmt.scene_heading.space_before },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
+                seen_scene = true;
                 first_content = false;
                 i += 1;
             }
             ElementKind::Action => {
-                let lines: Vec<Line> = wrap(&e.text, ACTION_WIDTH)
+                let lines: Vec<Line> = wrap(&cased(&fmt.action, &e.text), fmt.action.width_cols)
                     .into_iter()
-                    .map(|l| Line::text_line(LineKind::Action, ACTION_COL, l, Some(i)))
+                    .map(|l| {
+                        let col = aligned_col(&fmt.action, &l);
+                        Line::text_line(LineKind::Action, col, l, Some(i))
+                    })
                     .collect();
                 blocks.push(Block {
                     lines,
@@ -338,15 +574,20 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     speech: None,
                     splittable_action: true,
                     force_break_before: false,
-                    space_before: if first_content { 0 } else { 1 },
+                    space_before: if first_content { 0 } else { fmt.action.space_before },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 first_content = false;
                 i += 1;
             }
             ElementKind::Shot => {
-                let lines: Vec<Line> = wrap(&e.text, ACTION_WIDTH)
+                let lines: Vec<Line> = wrap(&cased(&fmt.shot, &e.text), fmt.shot.width_cols)
                     .into_iter()
-                    .map(|l| Line::text_line(LineKind::Shot, ACTION_COL, l, Some(i)))
+                    .map(|l| {
+                        let col = aligned_col(&fmt.shot, &l);
+                        Line::text_line(LineKind::Shot, col, l, Some(i))
+                    })
                     .collect();
                 blocks.push(Block {
                     lines,
@@ -355,13 +596,15 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     splittable_action: false,
                     force_break_before: false,
                     space_before: if first_content { 0 } else { 1 },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 first_content = false;
                 i += 1;
             }
             ElementKind::Transition => {
-                let text = e.text.clone();
-                let col = TRANSITION_RIGHT_COL.saturating_sub(text.chars().count());
+                let text = cased(&fmt.transition, &e.text);
+                let col = aligned_col(&fmt.transition, &text);
                 blocks.push(Block {
                     lines: vec![Line::text_line(LineKind::Transition, col, text, Some(i))],
                     keep_with_next: false,
@@ -369,6 +612,8 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     splittable_action: false,
                     force_break_before: false,
                     space_before: if first_content { 0 } else { 1 },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 first_content = false;
                 i += 1;
@@ -380,7 +625,7 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     first_content = false;
                     i = next_i;
                 } else {
-                    let (block, next_i) = build_speech_block(elements, i, first_content);
+                    let (block, next_i) = build_speech_block(elements, i, first_content, fmt);
                     blocks.push(block);
                     first_content = false;
                     i = next_i;
@@ -389,9 +634,9 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
             // Orphan parenthetical/dialogue without a cue: render at their
             // columns as a non-splittable block.
             ElementKind::Parenthetical => {
-                let lines: Vec<Line> = wrap(&e.text, PAREN_WIDTH)
+                let lines: Vec<Line> = wrap(&e.text, fmt.parenthetical.width_cols)
                     .into_iter()
-                    .map(|l| Line::text_line(LineKind::Parenthetical, PAREN_COL, l, Some(i)))
+                    .map(|l| Line::text_line(LineKind::Parenthetical, fmt.parenthetical.indent_cols, l, Some(i)))
                     .collect();
                 blocks.push(Block {
                     lines,
@@ -400,14 +645,16 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     splittable_action: false,
                     force_break_before: false,
                     space_before: if first_content { 0 } else { 1 },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 first_content = false;
                 i += 1;
             }
             ElementKind::Dialogue => {
-                let lines: Vec<Line> = wrap(&e.text, DIALOGUE_WIDTH)
+                let lines: Vec<Line> = wrap(&e.text, fmt.dialogue.width_cols)
                     .into_iter()
-                    .map(|l| Line::text_line(LineKind::Dialogue, DIALOGUE_COL, l, Some(i)))
+                    .map(|l| Line::text_line(LineKind::Dialogue, fmt.dialogue.indent_cols, l, Some(i)))
                     .collect();
                 blocks.push(Block {
                     lines,
@@ -416,6 +663,8 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
                     splittable_action: false,
                     force_break_before: false,
                     space_before: if first_content { 0 } else { 1 },
+                    first_element: i,
+                    locked_labels: Vec::new(),
                 });
                 first_content = false;
                 i += 1;
@@ -426,14 +675,21 @@ fn build_blocks(script: &Script, opts: &LayoutOptions) -> Vec<Block> {
 }
 
 /// Build a normal (single-column) speech block: CHARACTER + (paren|dialogue)*.
-fn build_speech_block(elements: &[Element], start: usize, first_content: bool) -> (Block, usize) {
-    let cue = display_cue(elements, start);
+fn build_speech_block(
+    elements: &[Element],
+    start: usize,
+    first_content: bool,
+    fmt: &FormatSpec,
+) -> (Block, usize) {
+    let cue = cased(&fmt.character, &display_cue(elements, start));
+    let cue_col = aligned_col(&fmt.character, &cue);
     let mut lines = vec![Line::text_line(
         LineKind::Character,
-        CHARACTER_COL,
+        cue_col,
         cue.clone(),
         Some(start),
     )];
+    let double = fmt.dialogue.line_spacing >= 2;
     let mut i = start + 1;
     let mut dialogue_start_line = 1usize;
     let mut seen_dialogue = false;
@@ -441,21 +697,34 @@ fn build_speech_block(elements: &[Element], start: usize, first_content: bool) -
     while i < elements.len() {
         match elements[i].kind {
             ElementKind::Parenthetical => {
-                for l in wrap(&elements[i].text, PAREN_WIDTH) {
-                    lines.push(Line::text_line(LineKind::Parenthetical, PAREN_COL, l, Some(i)));
+                for l in wrap(&elements[i].text, fmt.parenthetical.width_cols) {
+                    lines.push(Line::text_line(
+                        LineKind::Parenthetical,
+                        fmt.parenthetical.indent_cols,
+                        l,
+                        Some(i),
+                    ));
                 }
                 if !seen_dialogue {
                     dialogue_start_line = lines.len();
                 }
                 i += 1;
             }
-            ElementKind::Dialogue => {
-                if speech_element.is_none() {
+            ElementKind::Dialogue | ElementKind::Lyrics => {
+                let (kind, efmt) = if elements[i].kind == ElementKind::Lyrics {
+                    (LineKind::Lyrics, &fmt.lyrics)
+                } else {
+                    (LineKind::Dialogue, &fmt.dialogue)
+                };
+                if speech_element.is_none() && kind == LineKind::Dialogue {
                     speech_element = Some(i);
                 }
                 seen_dialogue = true;
-                for l in wrap(&elements[i].text, DIALOGUE_WIDTH) {
-                    lines.push(Line::text_line(LineKind::Dialogue, DIALOGUE_COL, l, Some(i)));
+                for l in wrap(&cased(efmt, &elements[i].text), efmt.width_cols) {
+                    if double && !lines.is_empty() && lines.last().map(|x| x.kind) == Some(kind) {
+                        lines.push(Line::blank());
+                    }
+                    lines.push(Line::text_line(kind, efmt.indent_cols, l, Some(i)));
                 }
                 i += 1;
             }
@@ -468,13 +737,15 @@ fn build_speech_block(elements: &[Element], start: usize, first_content: bool) -
             keep_with_next: false,
             speech: Some(SpeechInfo {
                 cue,
-                cue_col: CHARACTER_COL,
+                cue_col,
                 dialogue_start: dialogue_start_line,
                 element: speech_element,
             }),
             splittable_action: false,
             force_break_before: false,
-            space_before: if first_content { 0 } else { 1 },
+            space_before: if first_content { 0 } else { fmt.character.space_before },
+            first_element: start,
+            locked_labels: Vec::new(),
         },
         i,
     )
@@ -541,6 +812,8 @@ fn build_dual_block(elements: &[Element], start: usize, first_content: bool) -> 
             right_col: Some(rc),
             element: left_el,
             scene_number: None,
+            revised: false,
+            underline: false,
         });
     }
     (
@@ -551,33 +824,258 @@ fn build_dual_block(elements: &[Element], start: usize, first_content: bool) -> 
             splittable_action: false,
             force_break_before: false,
             space_before: if first_content { 0 } else { 1 },
+            first_element: start,
+            locked_labels: Vec::new(),
         },
         end,
     )
 }
 
 pub fn paginate(script: &Script, opts: &LayoutOptions) -> Layout {
-    let blocks = build_blocks(script, opts);
-    let mut pages: Vec<Page> = Vec::new();
-    let mut cur: Vec<Line> = Vec::new();
+    paginate_full(script, opts).0
+}
 
-    let new_page = |pages: &mut Vec<Page>, cur: &mut Vec<Line>| {
-        let number = pages.len() + 1;
-        pages.push(Page {
+fn nonws_len(s: &str) -> usize {
+    s.chars().filter(|c| !c.is_whitespace()).count()
+}
+
+/// Page assembly state with locked-aware label sequencing.
+struct Flow {
+    pages: Vec<Page>,
+    cur: Vec<Line>,
+    /// Printed label of the page currently being filled.
+    label: String,
+    locked: bool,
+}
+
+impl Flow {
+    fn close(&mut self) {
+        let number = self.pages.len() + 1;
+        let label = std::mem::take(&mut self.label);
+        self.pages.push(Page {
             number,
-            lines: std::mem::take(cur),
+            label: label.clone(),
+            lines: std::mem::take(&mut self.cur),
         });
+        // Overflow continuation: locked "12" -> "12A"; unlocked 12 -> 13.
+        self.label = next_page_label(&label, self.locked);
+    }
+
+    /// Label the page after the current one would get on overflow.
+    fn upcoming_label(&self) -> String {
+        next_page_label(&self.label, self.locked)
+    }
+
+    /// A locked page starts here: finish the current page (if any content)
+    /// and adopt the anchor's frozen label.
+    fn start_anchor(&mut self, label: &str) {
+        if !self.cur.is_empty() {
+            self.close();
+        }
+        self.label = label.to_string();
+    }
+}
+
+fn next_page_label(label: &str, locked: bool) -> String {
+    if locked {
+        next_locked_number(label)
+    } else {
+        label
+            .parse::<usize>()
+            .map(|n| (n + 1).to_string())
+            .unwrap_or_else(|_| next_locked_number(label))
+    }
+}
+
+/// Resolve a locked anchor to an element index in the current document.
+fn resolve_anchor(script: &Script, anchor: &crate::model::LockedPageAnchor) -> Option<usize> {
+    let len = script.elements.len();
+    if len == 0 {
+        return None;
+    }
+    if anchor.scene.is_empty() {
+        return Some(anchor.el_offset.min(len - 1));
+    }
+    let is_scene = |e: &Element| matches!(e.kind, ElementKind::SceneHeading | ElementKind::Omitted);
+    let h = script
+        .elements
+        .iter()
+        .position(|e| is_scene(e) && e.scene_number.as_deref() == Some(anchor.scene.as_str()))?;
+    // Clamp the offset to this scene (deleted content anchors at scene end).
+    let mut end = len;
+    for (j, e) in script.elements.iter().enumerate().skip(h + 1) {
+        if is_scene(e) {
+            end = j;
+            break;
+        }
+    }
+    Some((h + anchor.el_offset).min(end).min(len - 1))
+}
+
+/// Apply locked anchors to the block list: labels attach to the blocks where
+/// locked pages start, and anchors that fell *inside* a block at lock time
+/// (a speech split across the locked boundary) split that block at the
+/// recorded non-whitespace offset, re-emitting (MORE)/(CONT'D) for speeches.
+///
+/// Anchors whose content was deleted entirely resolve to the nearest
+/// surviving position via `resolve_anchor` clamping; if a scene is gone
+/// without an OMITTED marker its page number drops from the sequence — the
+/// supported way to remove a locked scene is Omit, which keeps numbering.
+fn apply_locked_anchors(
+    script: &Script,
+    locked: &LockedState,
+    blocks: Vec<Block>,
+    pre_splits: &mut Vec<DialogueSplit>,
+) -> Vec<Block> {
+    struct Resolved {
+        label: String,
+        el: usize,
+        nonws: usize,
+    }
+    let resolved: Vec<Resolved> = locked
+        .pages
+        .iter()
+        .filter_map(|a| {
+            resolve_anchor(script, a).map(|el| Resolved {
+                label: a.label.clone(),
+                el,
+                nonws: a.nonws_offset,
+            })
+        })
+        .collect();
+
+    let ends: Vec<usize> = (0..blocks.len())
+        .map(|bi| {
+            blocks
+                .get(bi + 1)
+                .map(|b| b.first_element)
+                .unwrap_or(usize::MAX)
+        })
+        .collect();
+
+    let mut out: Vec<Block> = Vec::with_capacity(blocks.len() + resolved.len());
+    let mut ai = 0usize;
+    for (bi, block) in blocks.into_iter().enumerate() {
+        let mut block = block;
+        while ai < resolved.len() && resolved[ai].el >= block.first_element && resolved[ai].el < ends[bi] {
+            let a = &resolved[ai];
+            ai += 1;
+            // Locate the boundary line inside the block for element a.el.
+            let mut cum = 0usize;
+            let mut cut: Option<usize> = None;
+            let mut last_line_of_el: Option<usize> = None;
+            for (li, line) in block.lines.iter().enumerate() {
+                if line.element == Some(a.el) {
+                    last_line_of_el = Some(li);
+                    if cum >= a.nonws && a.nonws > 0 {
+                        cut = Some(li);
+                        break;
+                    }
+                    cum += nonws_len(&line.text);
+                }
+            }
+            // nonws == 0 means the element started the locked page whole.
+            let cut = if a.nonws == 0 {
+                None
+            } else {
+                cut.or(last_line_of_el.map(|li| li + 1)) // element shrank: cut after it
+            };
+            match cut {
+                Some(li) if li > 0 && li < block.lines.len() => {
+                    let tail_lines: Vec<Line> = block.lines.split_off(li);
+                    let mut head = std::mem::replace(
+                        &mut block,
+                        Block {
+                            lines: tail_lines,
+                            keep_with_next: false,
+                            speech: None,
+                            splittable_action: false,
+                            force_break_before: false,
+                            space_before: 0,
+                            first_element: a.el,
+                            locked_labels: vec![a.label.clone()],
+                        },
+                    );
+                    block.splittable_action = head.splittable_action;
+                    if let Some(sp) = head.speech.take() {
+                        head.lines.push(Line::text_line(
+                            LineKind::More,
+                            DIALOGUE_COL,
+                            "(MORE)".into(),
+                            None,
+                        ));
+                        let mut cont = sp.cue.clone();
+                        if !cont.to_uppercase().contains("(CONT'D)") {
+                            cont.push_str(" (CONT'D)");
+                        }
+                        block.lines.insert(
+                            0,
+                            Line::text_line(LineKind::Character, sp.cue_col, cont.clone(), None),
+                        );
+                        block.speech = Some(SpeechInfo {
+                            cue: cont.clone(),
+                            cue_col: sp.cue_col,
+                            dialogue_start: 1,
+                            element: Some(a.el),
+                        });
+                        pre_splits.push(DialogueSplit {
+                            element: a.el,
+                            nonws_chars: a.nonws,
+                            next_page: 0, // ordinal fixed up after flow
+                            cont_cue: cont,
+                            next_label: a.label.clone(),
+                        });
+                    }
+                    out.push(head);
+                }
+                _ => {
+                    // Boundary at (or collapsed to) the block start.
+                    block.locked_labels.push(a.label.clone());
+                }
+            }
+        }
+        out.push(block);
+    }
+    out
+}
+
+pub fn paginate_full(script: &Script, opts: &LayoutOptions) -> (Layout, Vec<DialogueSplit>) {
+    let fmt = opts.format.clone().unwrap_or_default();
+    let numbers = assign_scene_numbers_fmt(script, opts.locked.as_ref(), fmt.lettered_scenes);
+    let mut blocks = build_blocks(script, opts, &numbers, &fmt);
+    let mut pre_splits: Vec<DialogueSplit> = Vec::new();
+    if let Some(locked) = &opts.locked {
+        blocks = apply_locked_anchors(script, locked, blocks, &mut pre_splits);
+    }
+
+    let mut flow = Flow {
+        pages: Vec::new(),
+        cur: Vec::new(),
+        label: "1".to_string(),
+        locked: opts.locked.is_some(),
     };
+    let mut splits: Vec<DialogueSplit> = Vec::new();
 
     for b in blocks {
+        // Locked page starts: all but the last label are anchors whose
+        // content vanished — they become empty pages that keep numbering.
+        if !b.locked_labels.is_empty() {
+            let last = b.locked_labels.len() - 1;
+            for (li, label) in b.locked_labels.iter().enumerate() {
+                flow.start_anchor(label);
+                if li < last {
+                    flow.close(); // empty placeholder page
+                }
+            }
+        }
         if b.force_break_before {
-            if !cur.is_empty() {
-                new_page(&mut pages, &mut cur);
+            if !flow.cur.is_empty() {
+                flow.close();
             }
             continue;
         }
-        let space = if cur.is_empty() { 0 } else { b.space_before };
-        let avail = BODY_LINES_PER_PAGE.saturating_sub(cur.len() + space);
+        let space = if flow.cur.is_empty() { 0 } else { b.space_before };
+        let avail = BODY_LINES_PER_PAGE.saturating_sub(flow.cur.len() + space);
         let need = b.lines.len();
 
         // Minimum lines the block needs on this page to start here.
@@ -596,21 +1094,21 @@ pub fn paginate(script: &Script, opts: &LayoutOptions) -> Layout {
 
         if need <= avail {
             for _ in 0..space {
-                cur.push(Line::blank());
+                flow.cur.push(Line::blank());
             }
-            cur.extend(b.lines);
+            flow.cur.extend(b.lines);
             continue;
         }
 
         if min_here > avail {
             // Doesn't fit at all: push to next page.
-            new_page(&mut pages, &mut cur);
-            cur.extend(b.lines);
+            flow.close();
+            flow.cur.extend(b.lines);
             // Overflow safety: a single block taller than a page spills.
-            while cur.len() > BODY_LINES_PER_PAGE {
-                let rest = cur.split_off(BODY_LINES_PER_PAGE);
-                new_page(&mut pages, &mut cur);
-                cur = rest;
+            while flow.cur.len() > BODY_LINES_PER_PAGE {
+                let rest = flow.cur.split_off(BODY_LINES_PER_PAGE);
+                flow.close();
+                flow.cur = rest;
             }
             continue;
         }
@@ -623,21 +1121,21 @@ pub fn paginate(script: &Script, opts: &LayoutOptions) -> Layout {
             let take = if lines.len() > take && take == 1 { 0 } else { take };
             if take > 0 {
                 for _ in 0..space {
-                    cur.push(Line::blank());
+                    flow.cur.push(Line::blank());
                 }
                 let rest = lines.split_off(take);
-                cur.extend(lines);
+                flow.cur.extend(lines);
                 lines = rest;
             }
-            new_page(&mut pages, &mut cur);
+            flow.close();
             // Keep filling full pages until the remainder fits.
             while lines.len() > BODY_LINES_PER_PAGE {
                 let rest = lines.split_off(BODY_LINES_PER_PAGE);
-                cur.extend(lines);
-                new_page(&mut pages, &mut cur);
+                flow.cur.extend(lines);
+                flow.close();
                 lines = rest;
             }
-            cur.extend(lines);
+            flow.cur.extend(lines);
             continue;
         }
 
@@ -660,36 +1158,59 @@ pub fn paginate(script: &Script, opts: &LayoutOptions) -> Layout {
             let for_dialogue = avail.saturating_sub(head.len() + 1);
             match split_dialogue_at_sentence(&dlg_texts, for_dialogue) {
                 Some((first, rest)) if !first.is_empty() => {
+                    // Record the exact split point for the editor: how many
+                    // non-whitespace chars of the split element stay on the
+                    // earlier page.
+                    let cut = first.len();
+                    let split_element = dlg.get(cut).and_then(|l| l.element);
+                    if let Some(se) = split_element {
+                        let consumed: usize = dlg[..cut]
+                            .iter()
+                            .filter(|l| l.element == Some(se))
+                            .map(|l| nonws_len(&l.text))
+                            .sum();
+                        let mut cc = sp.cue.clone();
+                        if !cc.to_uppercase().contains("(CONT'D)") {
+                            cc.push_str(" (CONT'D)");
+                        }
+                        splits.push(DialogueSplit {
+                            element: se,
+                            nonws_chars: consumed,
+                            next_page: flow.pages.len() + 2, // current page + 1
+                            cont_cue: cc,
+                            next_label: flow.upcoming_label(),
+                        });
+                    }
                     for _ in 0..space {
-                        cur.push(Line::blank());
+                        flow.cur.push(Line::blank());
                     }
-                    cur.extend(head);
+                    flow.cur.extend(head);
                     for t in first {
-                        cur.push(Line::text_line(LineKind::Dialogue, DIALOGUE_COL, t, sp.element));
+                        flow.cur.push(Line::text_line(LineKind::Dialogue, fmt.dialogue.indent_cols, t, sp.element));
                     }
-                    cur.push(Line::text_line(LineKind::More, DIALOGUE_COL, "(MORE)".into(), None));
-                    new_page(&mut pages, &mut cur);
+                    flow.cur.push(Line::text_line(LineKind::More, fmt.dialogue.indent_cols, "(MORE)".into(), None));
+                    flow.close();
                     // Re-cue with (CONT'D).
                     let mut cont_cue = sp.cue.clone();
                     if !cont_cue.to_uppercase().contains("(CONT'D)") {
                         cont_cue.push_str(" (CONT'D)");
                     }
-                    cur.push(Line::text_line(LineKind::Character, sp.cue_col, cont_cue, None));
+                    flow.cur.push(Line::text_line(LineKind::Character, sp.cue_col, cont_cue, None));
                     for t in rest {
-                        cur.push(Line::text_line(LineKind::Dialogue, DIALOGUE_COL, t, sp.element));
+                        flow.cur.push(Line::text_line(LineKind::Dialogue, fmt.dialogue.indent_cols, t, sp.element));
                     }
                     // Remaining non-splittable tail (parentheticals etc.).
-                    cur.extend(dlg[splittable_len..].iter().cloned());
+                    flow.cur.extend(dlg[splittable_len..].iter().cloned());
                     continue;
                 }
                 _ => {
                     // No clean split: move the whole speech to the next page.
-                    new_page(&mut pages, &mut cur);
-                    cur.extend(b.lines);
-                    while cur.len() > BODY_LINES_PER_PAGE {
-                        let rest = cur.split_off(BODY_LINES_PER_PAGE);
-                        new_page(&mut pages, &mut cur);
-                        cur = rest;
+                    flow.close();
+                    flow.cur.extend(b.lines);
+                    while flow.cur.len() > BODY_LINES_PER_PAGE {
+                        let rest = flow.cur.split_off(BODY_LINES_PER_PAGE);
+                        flow.close();
+                        flow.cur = rest;
                     }
                     continue;
                 }
@@ -697,27 +1218,118 @@ pub fn paginate(script: &Script, opts: &LayoutOptions) -> Layout {
         }
 
         // keep_with_next blocks that reach here start on the next page.
-        new_page(&mut pages, &mut cur);
-        cur.extend(b.lines);
-        while cur.len() > BODY_LINES_PER_PAGE {
-            let rest = cur.split_off(BODY_LINES_PER_PAGE);
-            new_page(&mut pages, &mut cur);
-            cur = rest;
+        flow.close();
+        flow.cur.extend(b.lines);
+        while flow.cur.len() > BODY_LINES_PER_PAGE {
+            let rest = flow.cur.split_off(BODY_LINES_PER_PAGE);
+            flow.close();
+            flow.cur = rest;
         }
     }
-    if !cur.is_empty() || pages.is_empty() {
-        let number = pages.len() + 1;
-        pages.push(Page {
-            number,
-            lines: cur,
-        });
+    if !flow.cur.is_empty() || flow.pages.is_empty() {
+        flow.close();
     }
-    Layout { pages }
+    let mut pages = flow.pages;
+    // Locked mid-element splits recorded before flow get their physical
+    // page ordinal from the label they anchor.
+    for sp in &mut pre_splits {
+        if sp.next_page == 0 {
+            sp.next_page = pages
+                .iter()
+                .find(|p| p.label == sp.next_label)
+                .map(|p| p.number)
+                .unwrap_or(1);
+        }
+    }
+    splits.append(&mut pre_splits);
+    splits.sort_by_key(|s| (s.element, s.nonws_chars));
+    // Revision marks: flag every physical line of a revision-marked element.
+    for page in &mut pages {
+        for line in &mut page.lines {
+            if let Some(el) = line.element {
+                if script.elements.get(el).map(|e| e.revision.is_some()) == Some(true) {
+                    line.revised = true;
+                }
+            }
+        }
+    }
+    (Layout { pages }, splits)
 }
 
-/// Editor-facing summary: page number per element.
+/// Materialize display scene numbers into the document (lock time).
+pub fn materialize_scene_numbers(script: &Script) -> Script {
+    let numbers = assign_scene_numbers(script, None);
+    let mut s = script.clone();
+    for (i, e) in s.elements.iter_mut().enumerate() {
+        if matches!(e.kind, ElementKind::SceneHeading | ElementKind::Omitted) {
+            e.scene_number = numbers[i].clone();
+        }
+    }
+    s
+}
+
+/// Lock the script: materialize scene numbers, paginate freely once, and
+/// freeze every page's start as an anchor. Returns the materialized script
+/// (to be written back to the document) and the locked state (project.json).
+pub fn compute_lock(script: &Script, opts: &LayoutOptions) -> (Script, LockedState) {
+    let script = materialize_scene_numbers(script);
+    let free = LayoutOptions {
+        locked: None,
+        ..opts.clone()
+    };
+    let (layout, _) = paginate_full(&script, &free);
+    let is_scene = |e: &Element| matches!(e.kind, ElementKind::SceneHeading | ElementKind::Omitted);
+    let mut anchors = Vec::new();
+    for (pi, page) in layout.pages.iter().enumerate() {
+        let Some(el) = page.lines.iter().find_map(|l| l.element) else {
+            continue;
+        };
+        let mut heading = None;
+        for j in (0..=el).rev() {
+            if is_scene(&script.elements[j]) {
+                heading = Some(j);
+                break;
+            }
+        }
+        let (scene, el_offset) = match heading {
+            Some(h) => (
+                script.elements[h].scene_number.clone().unwrap_or_default(),
+                el - h,
+            ),
+            None => (String::new(), el),
+        };
+        // If this page starts mid-element (a split speech/action carried
+        // over), record how much of the element earlier pages consumed.
+        let nonws_offset: usize = layout.pages[..pi]
+            .iter()
+            .flat_map(|p| &p.lines)
+            .filter(|l| l.element == Some(el))
+            .map(|l| nonws_len(&l.text))
+            .sum();
+        anchors.push(crate::model::LockedPageAnchor {
+            label: page.label.clone(),
+            scene,
+            el_offset,
+            nonws_offset,
+        });
+    }
+    let scenes = script
+        .elements
+        .iter()
+        .filter(|e| is_scene(e))
+        .filter_map(|e| e.scene_number.clone())
+        .collect();
+    let state = LockedState {
+        pages: anchors,
+        scenes,
+        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+    };
+    (script, state)
+}
+
+/// Editor-facing summary: page number per element + mid-dialogue splits.
 pub fn page_map(script: &Script, opts: &LayoutOptions) -> PageMap {
-    let layout = paginate(script, opts);
+    let (layout, dialogue_splits) = paginate_full(script, opts);
     let mut element_pages = vec![1usize; script.elements.len()];
     let mut seen = vec![false; script.elements.len()];
     for page in &layout.pages {
@@ -733,6 +1345,13 @@ pub fn page_map(script: &Script, opts: &LayoutOptions) -> PageMap {
     PageMap {
         element_pages,
         page_count: layout.pages.len(),
+        dialogue_splits,
+        page_labels: layout.pages.iter().map(|p| p.label.clone()).collect(),
+        scene_numbers: assign_scene_numbers_fmt(
+            script,
+            opts.locked.as_ref(),
+            opts.format.as_ref().map(|f| f.lettered_scenes).unwrap_or(false),
+        ),
     }
 }
 
@@ -946,6 +1565,7 @@ mod tests {
             &s,
             &LayoutOptions {
                 scene_numbering: SceneNumbering::Both,
+                ..LayoutOptions::default()
             },
         );
         let nums: Vec<Option<&str>> = layout.pages[0]
@@ -955,6 +1575,295 @@ mod tests {
             .map(|l| l.scene_number.as_deref())
             .collect();
         assert_eq!(nums, vec![Some("1"), Some("2A")]);
+    }
+
+    #[test]
+    fn page_map_reports_exact_dialogue_split_points() {
+        let mut s = Script::default();
+        s.elements.push(action_of_lines(BODY_LINES_PER_PAGE - 6));
+        s.elements.push(Element::new(ElementKind::Character, "MAYA"));
+        let sentences: Vec<String> = (0..10).map(|i| format!("Sentence number {}.", i)).collect();
+        s.elements.push(Element::new(ElementKind::Dialogue, sentences.join("\n")));
+        let pm = page_map(&s, &opts());
+        assert_eq!(pm.dialogue_splits.len(), 1);
+        let split = &pm.dialogue_splits[0];
+        assert_eq!(split.element, 2);
+        assert_eq!(split.next_page, 2);
+        assert_eq!(split.cont_cue, "MAYA (CONT'D)");
+        // The consumed non-whitespace chars must match a whole number of
+        // sentences ("Sentencenumber0." = 16 non-ws chars each).
+        assert!(split.nonws_chars > 0);
+        assert_eq!(split.nonws_chars % 16, 0, "{}", split.nonws_chars);
+        // And equal what the layout actually put on page 1.
+        let (layout, _) = paginate_full(&s, &opts());
+        let on_p1: usize = layout.pages[0]
+            .lines
+            .iter()
+            .filter(|l| l.kind == LineKind::Dialogue)
+            .map(|l| nonws_len(&l.text))
+            .sum();
+        assert_eq!(split.nonws_chars, on_p1);
+    }
+
+    // --- Format parameterization golden tests ---------------------------
+
+    fn full_sample() -> Script {
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::ActHeader, "ACT ONE"));
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. LAB - NIGHT"));
+        s.elements.push(action_of_lines(20));
+        s.elements.push(Element::new(ElementKind::Character, "MAYA"));
+        s.elements.push(Element::new(ElementKind::Parenthetical, "(quiet)"));
+        s.elements.push(Element::new(ElementKind::Dialogue, "We should not be here. Not tonight."));
+        s.elements.push(Element::new(ElementKind::Transition, "CUT TO:"));
+        s.elements.push(Element::new(ElementKind::SceneHeading, "EXT. STREET - DAY"));
+        s.elements.push(action_of_lines(60));
+        s.elements.push(Element::new(ElementKind::Character, "JONES"));
+        s.elements.push(Element::new(ElementKind::Lyrics, "A quiet song\nFor a loud street"));
+        s
+    }
+
+    #[test]
+    fn default_format_is_byte_identical_to_none() {
+        let s = full_sample();
+        let none = paginate(&s, &LayoutOptions::default());
+        let some = paginate(
+            &s,
+            &LayoutOptions {
+                format: Some(FormatSpec::default()),
+                ..LayoutOptions::default()
+            },
+        );
+        assert_eq!(none, some, "FormatSpec::default() must not change pagination");
+    }
+
+    #[test]
+    fn multicam_format_double_spaces_dialogue_and_pages_scenes() {
+        let mut fmt = FormatSpec::default();
+        fmt.dialogue.line_spacing = 2;
+        fmt.scene_heading.underline = true;
+        fmt.scene_per_page = true;
+        fmt.lettered_scenes = true;
+        fmt.minutes_per_page = 0.5;
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. STAGE - DAY"));
+        s.elements.push(Element::new(ElementKind::Character, "HOST"));
+        s.elements.push(Element::new(ElementKind::Dialogue, "Line one here.\nLine two here."));
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. KITCHEN - DAY"));
+        s.elements.push(Element::new(ElementKind::Action, "Beat."));
+        let o = LayoutOptions {
+            format: Some(fmt),
+            scene_numbering: SceneNumbering::Both,
+            ..LayoutOptions::default()
+        };
+        let (layout, _) = paginate_full(&s, &o);
+        // Each scene starts a new page.
+        assert_eq!(layout.pages.len(), 2);
+        // Scenes letter A, B.
+        let pm = page_map(&s, &o);
+        assert_eq!(pm.scene_numbers[0].as_deref(), Some("A"));
+        assert_eq!(pm.scene_numbers[3].as_deref(), Some("B"));
+        // Dialogue is double-spaced: a blank line between the two lines.
+        let p1 = &layout.pages[0];
+        let dlg: Vec<&Line> = p1.lines.iter().filter(|l| l.kind == LineKind::Dialogue).collect();
+        assert_eq!(dlg.len(), 2);
+        let i1 = p1.lines.iter().position(|l| l.kind == LineKind::Dialogue).unwrap();
+        assert_eq!(p1.lines[i1 + 1].kind, LineKind::Blank);
+        assert_eq!(p1.lines[i1 + 2].kind, LineKind::Dialogue);
+        // Sluglines carry the underline flag.
+        assert!(p1.lines.iter().any(|l| l.kind == LineKind::SceneHeading && l.underline));
+    }
+
+    #[test]
+    fn stage_play_format_centers_character_cues() {
+        let mut fmt = FormatSpec::default();
+        fmt.character.align = Align::Center;
+        fmt.character.indent_cols = 0;
+        fmt.character.width_cols = PAGE_COLS;
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::Character, "MAYA"));
+        s.elements.push(Element::new(ElementKind::Dialogue, "To be here."));
+        let o = LayoutOptions {
+            format: Some(fmt),
+            ..LayoutOptions::default()
+        };
+        let (layout, _) = paginate_full(&s, &o);
+        let cue = layout.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.kind == LineKind::Character)
+            .unwrap();
+        assert_eq!(cue.col, (PAGE_COLS - 4) / 2, "centered cue");
+    }
+
+    #[test]
+    fn act_headers_center_and_keep_with_next() {
+        let mut s = Script::default();
+        s.elements.push(action_of_lines(BODY_LINES_PER_PAGE - 2));
+        s.elements.push(Element::new(ElementKind::ActHeader, "ACT TWO"));
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. A - DAY"));
+        s.elements.push(Element::new(ElementKind::Action, "Go."));
+        let (layout, _) = paginate_full(&s, &LayoutOptions::default());
+        // Header never orphaned at page bottom.
+        assert!(layout.pages[0].lines.iter().all(|l| l.kind != LineKind::ActHeader));
+        let p2 = &layout.pages[1];
+        assert_eq!(p2.lines[0].kind, LineKind::ActHeader);
+        assert!(p2.lines[0].underline);
+        assert_eq!(p2.lines[0].col, (PAGE_COLS - 7) / 2);
+    }
+
+    // --- Locked pages / A-scenes golden tests ---------------------------
+
+    /// Two locked pages: scene 1 fills page 1 exactly, scene 2 on page 2.
+    fn locked_fixture() -> (Script, LockedState, LayoutOptions) {
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. ONE - DAY"));
+        // Heading(1) + blank(2) + 51 action lines = 54 -> page 1 exactly full.
+        s.elements.push(action_of_lines(BODY_LINES_PER_PAGE - 3));
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. TWO - DAY"));
+        s.elements.push(Element::new(ElementKind::Action, "Second scene."));
+        let (script, lock) = compute_lock(&s, &opts());
+        let o = LayoutOptions {
+            locked: Some(lock.clone()),
+            ..opts()
+        };
+        (script, lock, o)
+    }
+
+    #[test]
+    fn lock_freezes_page_labels() {
+        let (script, lock, o) = locked_fixture();
+        assert_eq!(lock.pages.len(), 2);
+        assert_eq!(lock.scenes, vec!["1".to_string(), "2".to_string()]);
+        // Scene numbers were materialized into the document.
+        assert_eq!(script.elements[0].scene_number.as_deref(), Some("1"));
+        let (layout, _) = paginate_full(&script, &o);
+        assert_eq!(layout.pages.len(), 2);
+        assert_eq!(layout.pages[0].label, "1");
+        assert_eq!(layout.pages[1].label, "2");
+    }
+
+    #[test]
+    fn edit_overflow_creates_a_page_without_reflowing_later_pages() {
+        let (mut script, _, o) = locked_fixture();
+        // Grow scene 1 so it can't fit on page 1 anymore.
+        script.elements[1] = action_of_lines(BODY_LINES_PER_PAGE + 10);
+        let (layout, _) = paginate_full(&script, &o);
+        let labels: Vec<&str> = layout.pages.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, vec!["1", "1A", "2"], "{:?}", labels);
+        // Scene 2 still starts at the top of its locked page.
+        let p2 = &layout.pages[2];
+        assert_eq!(p2.lines[0].kind, LineKind::SceneHeading);
+        assert_eq!(p2.lines[0].text, "INT. TWO - DAY");
+    }
+
+    #[test]
+    fn deletion_leaves_short_pages_and_keeps_labels() {
+        let (mut script, _, o) = locked_fixture();
+        // Shrink scene 1 to a couple of lines.
+        script.elements[1] = action_of_lines(2);
+        let (layout, _) = paginate_full(&script, &o);
+        let labels: Vec<&str> = layout.pages.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, vec!["1", "2"]);
+        assert!(layout.pages[0].lines.len() < BODY_LINES_PER_PAGE, "short page expected");
+        assert_eq!(layout.pages[1].lines[0].text, "INT. TWO - DAY");
+    }
+
+    #[test]
+    fn inserted_scene_gets_a_number_while_locked() {
+        let (mut script, lock, o) = locked_fixture();
+        // Insert a new (un-numbered) scene between scene 1 and scene 2.
+        script.elements.insert(2, Element::new(ElementKind::Action, "New material."));
+        script.elements.insert(2, Element::new(ElementKind::SceneHeading, "INT. NEW - DAY"));
+        let numbers = assign_scene_numbers(&script, Some(&lock));
+        let assigned: Vec<Option<&str>> = script
+            .elements
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.kind == ElementKind::SceneHeading)
+            .map(|(i, _)| numbers[i].as_deref())
+            .collect();
+        assert_eq!(assigned, vec![Some("1"), Some("1A"), Some("2")]);
+        // A second inserted scene after 1A becomes 1B.
+        script.elements.insert(4, Element::new(ElementKind::SceneHeading, "INT. NEWER - DAY"));
+        let numbers = assign_scene_numbers(&script, Some(&lock));
+        assert_eq!(numbers[4].as_deref(), Some("1B"));
+        let _ = o;
+    }
+
+    #[test]
+    fn omitted_scene_keeps_number_and_renders() {
+        let (mut script, _, o) = locked_fixture();
+        // Omit scene 2: replace heading + content with an OMITTED marker.
+        let mut om = Element::new(ElementKind::Omitted, "");
+        om.scene_number = Some("2".into());
+        script.elements.truncate(2);
+        script.elements.push(om);
+        let o = LayoutOptions {
+            scene_numbering: SceneNumbering::Both,
+            ..o
+        };
+        let (layout, _) = paginate_full(&script, &o);
+        let labels: Vec<&str> = layout.pages.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, vec!["1", "2"]);
+        let p2 = &layout.pages[1];
+        assert_eq!(p2.lines[0].text, "OMITTED");
+        assert_eq!(p2.lines[0].scene_number.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn unlock_and_relock_renumbers_sequentially() {
+        let (mut script, _, o) = locked_fixture();
+        script.elements[1] = action_of_lines(BODY_LINES_PER_PAGE + 10);
+        // While locked: overflow keeps the frozen numbering (1, 1A, 2).
+        let (locked_layout, _) = paginate_full(&script, &o);
+        let locked_labels: Vec<&str> = locked_layout.pages.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(locked_labels, vec!["1", "1A", "2"]);
+        // Relock: free reflow first, then sequential labels frozen fresh.
+        let (script2, lock2) = compute_lock(&script, &LayoutOptions { locked: None, ..o.clone() });
+        let expected: Vec<String> = {
+            let (free, _) = paginate_full(&script2, &LayoutOptions { locked: None, ..opts() });
+            (1..=free.pages.len()).map(|n| n.to_string()).collect()
+        };
+        let relocked = LayoutOptions {
+            locked: Some(lock2),
+            ..opts()
+        };
+        let (layout, _) = paginate_full(&script2, &relocked);
+        let labels: Vec<String> = layout.pages.iter().map(|p| p.label.clone()).collect();
+        assert_eq!(labels, expected);
+        // No A-pages remain after relock.
+        assert!(labels.iter().all(|l| l.chars().all(|c| c.is_ascii_digit())));
+    }
+
+    #[test]
+    fn locked_pages_compose_with_dialogue_splits_and_revisions() {
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. ONE - DAY"));
+        s.elements.push(action_of_lines(BODY_LINES_PER_PAGE - 9));
+        s.elements.push(Element::new(ElementKind::Character, "MAYA"));
+        let sentences: Vec<String> = (0..10).map(|i| format!("Sentence number {}.", i)).collect();
+        let mut d = Element::new(ElementKind::Dialogue, sentences.join("\n"));
+        d.revision = Some("blue".into());
+        s.elements.push(d);
+        let (script, lock) = compute_lock(&s, &opts());
+        let o = LayoutOptions {
+            locked: Some(lock),
+            ..opts()
+        };
+        let (layout, splits) = paginate_full(&script, &o);
+        // The speech splits across the locked boundary with MORE/CONT'D.
+        assert_eq!(splits.len(), 1);
+        assert_eq!(splits[0].next_label, layout.pages[1].label);
+        let p1_last = layout.pages[0].lines.last().unwrap();
+        assert_eq!(p1_last.kind, LineKind::More);
+        assert_eq!(layout.pages[1].lines[0].text, "MAYA (CONT'D)");
+        // Revision marks survive on locked pages.
+        assert!(layout
+            .pages
+            .iter()
+            .flat_map(|p| &p.lines)
+            .any(|l| l.revised && l.kind == LineKind::Dialogue));
     }
 
     #[test]

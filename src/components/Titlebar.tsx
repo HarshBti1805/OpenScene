@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp } from "../store";
+import { t } from "../i18n";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -35,7 +36,7 @@ export function Titlebar() {
   return (
     <header className={`titlebar${IS_MAC ? " mac" : ""}`} data-tauri-drag-region>
       <div className="titlebar-brand" data-tauri-drag-region aria-hidden="true">
-        <span className="brand-mark">◨</span> OpenScene
+        <span className="brand-mark">◨</span> {t("app.name")}
       </div>
       {view !== "start" && meta && (
         <div className="titlebar-doc" data-tauri-drag-region>
@@ -47,16 +48,16 @@ export function Titlebar() {
       <span className={`titlebar-dirty${dirty ? " on" : ""}`} aria-hidden="true" />
       {!IS_MAC && (
         <div className="winctl">
-          <button aria-label="Minimize window" onClick={() => void win().minimize()}>
+          <button aria-label={t("titlebar.minimize")} onClick={() => void win().minimize()}>
             ─
           </button>
           <button
-            aria-label={maximized ? "Restore window" : "Maximize window"}
+            aria-label={maximized ? t("titlebar.restore") : t("titlebar.maximize")}
             onClick={() => void win().toggleMaximize()}
           >
             {maximized ? "❐" : "□"}
           </button>
-          <button className="close" aria-label="Close window" onClick={() => void win().close()}>
+          <button className="close" aria-label={t("titlebar.close")} onClick={() => void win().close()}>
             ✕
           </button>
         </div>

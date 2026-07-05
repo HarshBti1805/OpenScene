@@ -5,8 +5,10 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "./api";
 import { useApp } from "./store";
+import { t } from "./i18n";
 import { getEditorView, forceRepaginate, replaceEditorScript } from "./editor/editorRef";
 import { insertPageBreak, setElementKind, toggleDualDialogue } from "./editor/commands";
+import { addAlternate, cycleAlternate } from "./editor/editorRef";
 import type { ElementKind, SceneNumbering, Script } from "./types";
 
 export interface AppCommand {
@@ -42,12 +44,12 @@ async function exportAs(kind: "pdf" | "fdx" | "fountain") {
   const file = await save({ defaultPath: `${name}.${kind}`, filters });
   if (!file) return;
   try {
-    if (kind === "pdf") await api.exportPdf(file, fullScript(), s.layoutOptions());
+    if (kind === "pdf") await api.exportPdf(file, fullScript(), s.layoutOptions(), s.projectPath);
     else if (kind === "fdx") await api.exportFdx(file, fullScript());
     else await api.exportFountain(file, fullScript());
-    s.setStatus(`Exported ${file.split(/[\\/]/).pop()}`);
+    s.setStatus(t("cmd.exported", { name: file.split(/[\\/]/).pop() ?? "" }));
   } catch (e) {
-    s.setStatus(`Export failed: ${e}`);
+    s.setStatus(t("cmd.exportFailed", { error: String(e) }));
   }
 }
 
@@ -55,14 +57,14 @@ export function buildCommands(): AppCommand[] {
   const app = () => useApp.getState();
   const kindCmd = (kind: ElementKind, n: number): AppCommand => ({
     id: `element.${kind}`,
-    title: `Element: ${kind.replace("_", " ")}`,
+    title: t("cmd.element", { kind: kind.replace("_", " ") }),
     shortcut: `Mod-${n}`,
     needsProject: true,
     run: () => runEditorCommand(setElementKind(kind) as never),
   });
   const numberingCmd = (n: SceneNumbering): AppCommand => ({
     id: `numbering.${n}`,
-    title: `Scene numbers: ${n}`,
+    title: t("cmd.numbering", { mode: n }),
     needsProject: true,
     run: () => {
       app().setSceneNumbering(n);
@@ -73,17 +75,17 @@ export function buildCommands(): AppCommand[] {
   return [
     {
       id: "file.save",
-      title: "Save",
+      title: t("cmd.save"),
       shortcut: "Mod-s",
       needsProject: true,
       run: async () => {
         await app().saveNow();
-        app().setStatus("Saved");
+        app().setStatus(t("cmd.savedStatus"));
       },
     },
     {
       id: "file.saveVersion",
-      title: "Save Version…",
+      title: t("cmd.saveVersion"),
       shortcut: "Mod-Shift-s",
       needsProject: true,
       run: () => {
@@ -93,31 +95,31 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: "file.exportPdf",
-      title: "Export PDF…",
+      title: t("cmd.exportPdf"),
       shortcut: "Mod-Shift-e",
       needsProject: true,
       run: () => exportAs("pdf"),
     },
-    { id: "file.exportFdx", title: "Export Final Draft (FDX)…", needsProject: true, run: () => exportAs("fdx") },
-    { id: "file.exportFountain", title: "Export Fountain…", needsProject: true, run: () => exportAs("fountain") },
+    { id: "file.exportFdx", title: t("cmd.exportFdx"), needsProject: true, run: () => exportAs("fdx") },
+    { id: "file.exportFountain", title: t("cmd.exportFountain"), needsProject: true, run: () => exportAs("fountain") },
     {
       id: "file.print",
-      title: "Print (opens PDF in system viewer)",
+      title: t("cmd.print"),
       shortcut: "Mod-p",
       needsProject: true,
       run: async () => {
         const s = app();
         try {
-          const path = await api.exportPdfTemp(fullScript(), s.layoutOptions());
+          const path = await api.exportPdfTemp(fullScript(), s.layoutOptions(), s.projectPath);
           await openPath(path);
         } catch (e) {
-          s.setStatus(`Print failed: ${e}`);
+          s.setStatus(t("cmd.printFailed", { error: String(e) }));
         }
       },
     },
     {
       id: "file.import",
-      title: "Import Fountain / FDX into current script…",
+      title: t("cmd.import"),
       needsProject: true,
       run: async () => {
         const file = await open({
@@ -127,54 +129,73 @@ export function buildCommands(): AppCommand[] {
         if (typeof file !== "string") return;
         const s = app();
         try {
-          // Safety: snapshot before an import overwrites the document.
+          // Safety: snapshot + zipped backup before an import overwrites.
           if (s.projectPath) await api.takeSnapshot(s.projectPath, fullScript(), "before import", false);
+          await s.milestoneBackup("import");
           const script = await api.importScript(file);
           replaceEditorScript(script);
           if (script.title_page.length) s.setTitlePage(script.title_page);
-          s.setStatus(`Imported ${file.split(/[\\/]/).pop()}`);
+          s.setStatus(t("cmd.imported", { name: file.split(/[\\/]/).pop() ?? "" }));
         } catch (e) {
-          s.setStatus(`Import failed: ${e}`);
+          s.setStatus(t("cmd.importFailed", { error: String(e) }));
         }
       },
     },
     {
       id: "file.close",
-      title: "Close project",
+      title: t("cmd.closeProject"),
       shortcut: "Mod-w",
       needsProject: true,
       run: () => app().closeProject(),
     },
     {
       id: "edit.find",
-      title: "Find and Replace",
+      title: t("cmd.find"),
       shortcut: "Mod-f",
       needsProject: true,
       run: () => app().setFindOpen(true),
     },
     {
       id: "edit.rename",
-      title: "Rename character everywhere…",
+      title: t("cmd.rename"),
       needsProject: true,
       run: () => app().setRenameOpen(true),
     },
     {
       id: "edit.dual",
-      title: "Toggle dual dialogue",
+      title: t("cmd.dual"),
       shortcut: "Mod-Alt-d",
       needsProject: true,
       run: () => runEditorCommand(toggleDualDialogue as never),
     },
     {
       id: "edit.pageBreak",
-      title: "Insert forced page break",
+      title: t("cmd.pageBreak"),
       shortcut: "Mod-Enter",
       needsProject: true,
       run: () => runEditorCommand(insertPageBreak as never),
     },
     {
+      id: "edit.addAlternate",
+      title: t("cmd.addAlternate"),
+      shortcut: "Mod-Alt-n",
+      needsProject: true,
+      run: () => {
+        if (addAlternate()) app().setStatus(t("alt.added"));
+      },
+    },
+    {
+      id: "edit.cycleAlternate",
+      title: t("cmd.cycleAlternate"),
+      shortcut: "Mod-Alt-x",
+      needsProject: true,
+      run: () => {
+        if (!cycleAlternate()) app().setStatus(t("alt.none"));
+      },
+    },
+    {
       id: "edit.addNote",
-      title: "Add script note at cursor…",
+      title: t("cmd.addNote"),
       needsProject: true,
       run: () => {
         if (app().panel !== "notes") app().togglePanel("notes");
@@ -188,92 +209,124 @@ export function buildCommands(): AppCommand[] {
     kindCmd("dialogue", 5),
     kindCmd("transition", 6),
     kindCmd("shot", 7),
+    kindCmd("act_header", 8),
+    kindCmd("lyrics", 9),
     {
       id: "view.write",
-      title: "View: Script",
+      title: t("cmd.viewScript"),
       needsProject: true,
       run: () => app().setView("write"),
     },
     {
       id: "view.cards",
-      title: "View: Index cards",
+      title: t("cmd.viewCards"),
       needsProject: true,
       run: () => app().setView("cards"),
     },
     {
       id: "view.navigator",
-      title: "Toggle scene navigator",
+      title: t("cmd.toggleNavigator"),
       shortcut: "Mod-Shift-1",
       needsProject: true,
       run: () => app().togglePanel("navigator"),
     },
     {
       id: "view.notes",
-      title: "Toggle notes panel",
+      title: t("cmd.toggleNotes"),
       shortcut: "Mod-Shift-2",
       needsProject: true,
       run: () => app().togglePanel("notes"),
     },
     {
       id: "view.stats",
-      title: "Toggle statistics panel",
+      title: t("cmd.toggleStats"),
       shortcut: "Mod-Shift-3",
       needsProject: true,
       run: () => app().togglePanel("stats"),
     },
     {
       id: "view.snapshots",
-      title: "Toggle version history",
+      title: t("cmd.toggleVersions"),
       shortcut: "Mod-Shift-4",
       needsProject: true,
       run: () => app().togglePanel("snapshots"),
     },
     {
+      id: "view.revisions",
+      title: t("cmd.toggleRevisions"),
+      shortcut: "Mod-Shift-5",
+      needsProject: true,
+      run: () => app().togglePanel("revisions"),
+    },
+    {
       id: "view.titlePage",
-      title: "Edit title page…",
+      title: t("cmd.titlePage"),
       needsProject: true,
       run: () => app().setTitlePageOpen(true),
     },
     {
       id: "view.distractionFree",
-      title: "Toggle distraction-free mode",
+      title: t("cmd.distractionFree"),
       shortcut: "Mod-Shift-f",
       run: () => app().setDistractionFree(!app().distractionFree),
     },
     {
       id: "view.typewriter",
-      title: "Toggle typewriter scrolling",
+      title: t("cmd.typewriter"),
       run: () => app().setTypewriter(!app().typewriter),
     },
     {
       id: "view.lineFocus",
-      title: "Toggle line focus dimming",
+      title: t("cmd.lineFocus"),
       run: () => app().setLineFocus(!app().lineFocus),
     },
     {
+      id: "view.tableRead",
+      title: t("cmd.tableRead"),
+      needsProject: true,
+      run: () => app().setTableReadOpen(!app().tableReadOpen),
+    },
+    {
       id: "view.format",
-      title: "Format & Appearance…",
+      title: t("cmd.format"),
       shortcut: "Mod-,",
       run: () => app().setFormatOpen(true),
     },
-    { id: "theme.system", title: "Theme: Follow system", run: () => app().setThemePref("system") },
-    { id: "theme.light", title: "Theme: Light", run: () => app().setThemePref("light") },
-    { id: "theme.dark", title: "Theme: Dark", run: () => app().setThemePref("dark") },
-    { id: "theme.midnight", title: "Theme: Midnight", run: () => app().setThemePref("midnight") },
+    { id: "theme.system", title: t("cmd.themeSystem"), run: () => app().setThemePref("system") },
+    { id: "theme.light", title: t("cmd.themeLight"), run: () => app().setThemePref("light") },
+    { id: "theme.dark", title: t("cmd.themeDark"), run: () => app().setThemePref("dark") },
+    { id: "theme.midnight", title: t("cmd.themeMidnight"), run: () => app().setThemePref("midnight") },
     numberingCmd("none"),
     numberingCmd("left"),
     numberingCmd("right"),
     numberingCmd("both"),
     {
+      id: "view.uiZoomIn",
+      title: t("cmd.uiZoomIn"),
+      shortcut: "Mod-Shift-=",
+      run: () => app().setUiZoom(app().uiZoom + 0.05),
+    },
+    {
+      id: "view.uiZoomOut",
+      title: t("cmd.uiZoomOut"),
+      shortcut: "Mod-Shift--",
+      run: () => app().setUiZoom(app().uiZoom - 0.05),
+    },
+    {
+      id: "view.uiZoomReset",
+      title: t("cmd.uiZoomReset"),
+      run: () => app().setUiZoom(1),
+    },
+    {
       id: "backup.now",
-      title: "Back up project now…",
+      title: t("cmd.backupNow"),
       needsProject: true,
       run: async () => {
         const s = app();
         if (!s.projectPath) return;
         let dir = s.projectMeta?.backup_dir ?? null;
         if (!dir) {
-          const picked = await open({ directory: true, title: "Choose backup folder" });
+          const picked = await open({ directory: true, title: t("cmd.chooseBackupTitle") });
           if (typeof picked !== "string") return;
           dir = picked;
           await s.setBackupDir(dir);
@@ -281,18 +334,18 @@ export function buildCommands(): AppCommand[] {
         try {
           await s.saveNow();
           const name = await api.createBackup(s.projectPath, dir);
-          s.setStatus(`Backed up: ${name}`);
+          s.setStatus(t("cmd.backedUp", { name }));
         } catch (e) {
-          s.setStatus(`Backup failed: ${e}`);
+          s.setStatus(t("cmd.backupFailed", { error: String(e) }));
         }
       },
     },
     {
       id: "backup.chooseDir",
-      title: "Choose backup folder…",
+      title: t("cmd.chooseBackupDir"),
       needsProject: true,
       run: async () => {
-        const picked = await open({ directory: true, title: "Choose backup folder" });
+        const picked = await open({ directory: true, title: t("cmd.chooseBackupTitle") });
         if (typeof picked === "string") await app().setBackupDir(picked);
       },
     },
@@ -308,6 +361,8 @@ export function eventShortcut(e: KeyboardEvent): string {
   let key = e.key;
   // Shift+digit produces symbols ("!", "@"); recover the digit from e.code.
   if (e.code.startsWith("Digit")) key = e.code.slice(5);
+  else if (e.code === "Equal") key = "=";
+  else if (e.code === "Minus") key = "-";
   else if (key !== "Enter" && key.length === 1) key = key.toLowerCase();
   parts.push(key);
   return parts.join("-");

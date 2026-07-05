@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "../store";
 import { getEditorView, jumpToElement } from "../editor/editorRef";
 import { insertNote } from "../editor/commands";
+import { t } from "../i18n";
 
 const NOTE_CATEGORIES = ["note", "idea", "fix", "research", "beat"];
 
@@ -68,15 +69,15 @@ export function NotesPanel() {
   };
 
   return (
-    <div className="panel" role="complementary" aria-label="Script notes">
-      <div className="panel-header">Notes</div>
+    <div className="panel" role="complementary" aria-label={t("panel.notes")}>
+      <div className="panel-header">{t("panel.notes")}</div>
       <div className="note-add">
         <input
           ref={inputRef}
           className="input"
           value={text}
-          placeholder="Add note at cursor…"
-          aria-label="Note text"
+          placeholder={t("notes.addPlaceholder")}
+          aria-label={t("notes.noteText")}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
@@ -84,7 +85,7 @@ export function NotesPanel() {
           <select
             className="input"
             value={category}
-            aria-label="Note category"
+            aria-label={t("notes.category")}
             onChange={(e) => setCategory(e.target.value)}
           >
             {NOTE_CATEGORIES.map((c) => (
@@ -94,25 +95,25 @@ export function NotesPanel() {
             ))}
           </select>
           <button className="btn btn-primary" onClick={add}>
-            Add
+            {t("notes.add")}
           </button>
         </div>
       </div>
       <div className="panel-body">
-        {notes.length === 0 && <div className="panel-empty">No notes. Place the cursor and add one above.</div>}
+        {notes.length === 0 && <div className="panel-empty">{t("panel.emptyNotes")}</div>}
         {notes.map((n, i) => (
           <div key={i} className={`note-item note-${n.category}`}>
             <button
               className="note-jump"
               onClick={() => jumpToElement(n.elementIndex)}
-              aria-label={`Go to note: ${n.text}`}
+              aria-label={t("notes.goTo", { text: n.text })}
             >
               <div className="note-text">{n.text}</div>
               <div className="note-context">
                 <span className="note-cat">{n.category}</span> · {n.context}
               </div>
             </button>
-            <button className="note-delete" onClick={() => remove(n)} aria-label={`Delete note: ${n.text}`}>
+            <button className="note-delete" onClick={() => remove(n)} aria-label={t("notes.delete", { text: n.text })}>
               ×
             </button>
           </div>

@@ -1,7 +1,8 @@
 import { Schema, type NodeSpec } from "prosemirror-model";
 import type { ElementKind } from "../types";
+import { t } from "../i18n";
 
-/** Block kinds that hold editable text (everything except page_break). */
+/** Block kinds that hold editable text (everything except atoms). */
 export const TEXT_KINDS: ElementKind[] = [
   "scene_heading",
   "action",
@@ -10,6 +11,8 @@ export const TEXT_KINDS: ElementKind[] = [
   "dialogue",
   "transition",
   "shot",
+  "act_header",
+  "lyrics",
 ];
 
 const common = (kind: ElementKind): NodeSpec => ({
@@ -17,11 +20,17 @@ const common = (kind: ElementKind): NodeSpec => ({
   group: "block",
   attrs: {
     dual: { default: null },
+    revision: { default: null },
   },
   parseDOM: [{ tag: `div[data-kind="${kind}"]` }],
   toDOM(node) {
     const cls = node.attrs.dual ? ` dual dual-${node.attrs.dual}` : "";
-    return ["div", { "data-kind": kind, class: `el el-${kind}${cls}` }, 0];
+    const attrs: Record<string, string> = {
+      "data-kind": kind,
+      class: `el el-${kind}${cls}${node.attrs.revision ? " revised" : ""}`,
+    };
+    if (node.attrs.revision) attrs["data-rev"] = String(node.attrs.revision);
+    return ["div", attrs, 0];
   },
 });
 
@@ -32,6 +41,7 @@ export const schema = new Schema({
       ...common("scene_heading"),
       attrs: {
         dual: { default: null },
+        revision: { default: null },
         scene_number: { default: null },
         synopsis: { default: null },
         color: { default: null },
@@ -39,8 +49,9 @@ export const schema = new Schema({
       toDOM(node) {
         const attrs: Record<string, string> = {
           "data-kind": "scene_heading",
-          class: "el el-scene_heading",
+          class: `el el-scene_heading${node.attrs.revision ? " revised" : ""}`,
         };
+        if (node.attrs.revision) attrs["data-rev"] = String(node.attrs.revision);
         if (node.attrs.color) {
           attrs.style = `box-shadow: inset 4px 0 0 ${node.attrs.color}`;
         }
@@ -53,6 +64,8 @@ export const schema = new Schema({
     dialogue: common("dialogue"),
     transition: common("transition"),
     shot: common("shot"),
+    act_header: common("act_header"),
+    lyrics: common("lyrics"),
     page_break: {
       group: "block",
       atom: true,
@@ -61,8 +74,39 @@ export const schema = new Schema({
       toDOM() {
         return [
           "div",
-          { "data-kind": "page_break", class: "el el-page_break", role: "separator", "aria-label": "Forced page break" },
-          ["span", {}, "FORCED PAGE BREAK"],
+          { "data-kind": "page_break", class: "el el-page_break", role: "separator", "aria-label": t("editor.pageBreakAria") },
+          ["span", {}, t("editor.forcedPageBreak")],
+        ];
+      },
+    },
+    // Omitted locked scene: an atom placeholder that keeps its number.
+    omitted: {
+      group: "block",
+      atom: true,
+      selectable: true,
+      attrs: {
+        scene_number: { default: null },
+        revision: { default: null },
+      },
+      parseDOM: [
+        {
+          tag: 'div[data-kind="omitted"]',
+          getAttrs(dom) {
+            return { scene_number: (dom as HTMLElement).getAttribute("data-scene") };
+          },
+        },
+      ],
+      toDOM(node) {
+        return [
+          "div",
+          {
+            "data-kind": "omitted",
+            "data-scene": node.attrs.scene_number ?? "",
+            class: "el el-omitted",
+            role: "note",
+            "aria-label": t("editor.omittedAria", { n: String(node.attrs.scene_number ?? "") }),
+          },
+          ["span", {}, `${node.attrs.scene_number ?? ""}  OMITTED`],
         ];
       },
     },
@@ -109,7 +153,7 @@ export const schema = new Schema({
             class: `inline-note note-${node.attrs.category}`,
             title: `${node.attrs.category}: ${node.attrs.text}`,
             role: "note",
-            "aria-label": `Script note: ${node.attrs.text}`,
+            "aria-label": t("editor.noteAria", { text: String(node.attrs.text) }),
           },
           "\u25C6",
         ];

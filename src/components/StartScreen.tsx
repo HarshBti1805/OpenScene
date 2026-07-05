@@ -3,13 +3,17 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { lastOpenedAt, useApp } from "../store";
 import {
-  BUILTIN_TEMPLATES,
+  builtinTemplates,
   deleteUserTemplate,
   listUserTemplates,
+  TEMPLATE_CATEGORIES,
+  type BuiltinTemplate,
   type UserTemplate,
 } from "../templates";
-import type { Script } from "../types";
+import { defaultFormatSpec, type Script } from "../types";
 import { getEditorView, replaceEditorScript } from "../editor/editorRef";
+import { t } from "../i18n";
+import { useFocusTrap } from "../ui/useFocusTrap";
 
 interface PosterData {
   path: string;
@@ -23,19 +27,20 @@ interface PosterData {
 function relativeTime(ts: number | null): string {
   if (!ts) return "";
   const mins = Math.floor((Date.now() - ts) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t("start.justNow");
+  if (mins < 60) return t("start.minutesAgo", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("start.hoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return t("start.daysAgo", { n: days });
   return new Date(ts).toLocaleDateString();
 }
 
 async function loadPoster(path: string): Promise<PosterData> {
   const name = path.split(/[\\/]/).pop() ?? path;
   try {
-    const data = await api.openProject(path);
+    // peek: read-only, no heartbeat/verification side effects
+    const data = await api.peekProject(path);
     const scenes = data.script.elements.filter((e) => e.kind === "scene_heading");
     let pages: number | null = null;
     try {
@@ -78,7 +83,7 @@ export function StartScreen() {
   }, []);
 
   const openFolder = async () => {
-    const picked = await open({ directory: true, title: "Open project folder" });
+    const picked = await open({ directory: true, title: t("start.openTitle") });
     if (typeof picked === "string") {
       try {
         await loadProject(picked);
@@ -89,16 +94,15 @@ export function StartScreen() {
   };
 
   return (
-    <div className="start-screen view-enter" role="main" aria-label="Start screen">
+    <div className="start-screen view-enter" role="main" aria-label={t("app.name")}>
       <div className="start-inner">
         <header className="start-masthead">
-          <p className="start-kicker">Scene 1 · Take 1 · Int. Your Story — Day</p>
+          <p className="start-kicker">{t("start.kicker")}</p>
           <h1 className="start-title">
             Open<span style={{ color: "var(--os-accent)" }}>Scene</span>
           </h1>
           <p className="start-subtitle">
-            Free, open-source, offline screenwriting. Your scripts are plain files on your disk —
-            forever.
+            {t("start.subtitle")}
           </p>
         </header>
 
@@ -112,14 +116,14 @@ export function StartScreen() {
           <button
             className="poster poster-new"
             onClick={() => setGalleryOpen(true)}
-            aria-label="New project from template"
+            aria-label={t("start.newProject")}
             style={{ animationDelay: "0ms" }}
           >
-            <span className="poster-kicker">Production no. {posters.length + 1}</span>
+            <span className="poster-kicker">{t("start.productionNo", { n: posters.length + 1 })}</span>
             <span className="poster-new-plus" aria-hidden="true">
               +
             </span>
-            <span className="poster-title">New Project</span>
+            <span className="poster-title">{t("start.newProject")}</span>
           </button>
 
           {posters.map((p, i) => (
@@ -128,12 +132,12 @@ export function StartScreen() {
               className="poster"
               style={{ animationDelay: `${Math.min(i + 1, 8) * 40}ms` }}
               onClick={() => loadProject(p.path).catch((e) => setError(String(e)))}
-              aria-label={`Open project ${p.name}${p.pages ? `, ${p.pages} pages` : ""}`}
+              aria-label={t("start.posterAria", { name: p.name })}
             >
-              <span className="poster-kicker">{relativeTime(p.lastOpened) || "on disk"}</span>
+              <span className="poster-kicker">{relativeTime(p.lastOpened) || t("start.onDisk")}</span>
               <span className="poster-title">{p.name}</span>
               <span className="poster-meta">
-                {p.pages !== null ? `${p.pages} PP` : "—"} · {p.scenes} SC
+                {t("start.pagesScenes", { pages: p.pages !== null ? p.pages : "—", scenes: p.scenes })}
               </span>
               <span className="poster-strip" aria-hidden="true">
                 {(p.colors.length ? p.colors : [null]).map((c, ci) => (
@@ -145,8 +149,8 @@ export function StartScreen() {
         </div>
 
         <div className="start-open-row">
-          <button className="btn" onClick={openFolder} aria-label="Open an existing project folder">
-            Open Project Folder…
+          <button className="btn" onClick={openFolder} aria-label={t("start.openFolder")}>
+            {t("start.openFolder")}
           </button>
         </div>
       </div>
@@ -157,42 +161,67 @@ export function StartScreen() {
 }
 
 function TemplateGallery({ onClose, onError }: { onClose: () => void; onError: (e: string) => void }) {
-  const loadProject = useApp((s) => s.loadProject);
+  const trapRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<string>("feature");
   const [userTemplates, setUserTemplates] = useState<UserTemplate[]>(listUserTemplates());
   const [busy, setBusy] = useState(false);
+  const builtins: BuiltinTemplate[] = builtinTemplates();
 
   const create = async () => {
     if (!name.trim() || busy) {
-      if (!name.trim()) onError("Give the project a name.");
+      if (!name.trim()) onError(t("start.nameRequired"));
       return;
     }
     const parent = await open({
       directory: true,
-      title: "Where should the project folder be created?",
+      title: t("start.whereCreate"),
     });
     if (typeof parent !== "string") return;
     setBusy(true);
     try {
-      const user = userTemplates.find((t) => t.id === selected);
-      const data = await api.createProject(parent, name.trim(), user ? "short" : selected);
-      await loadProject(data.path);
+      const user = userTemplates.find((x) => x.id === selected);
+      const builtin = builtins.find((x) => x.id === selected);
+      const result = await api.createProject(parent, name.trim(), "feature");
+      const projectPath = result.data?.path;
+      if (!projectPath) throw new Error(result.corrupt ?? "create failed");
+      await useApp.getState().applyOpenResult(result, projectPath);
+
+      // Stamp the template: boilerplate/content + format + title page.
+      let script: Script | null = null;
+      let format = null;
       if (user) {
-        // Stamp the user template's format + title page + boilerplate.
-        const script: Script = {
+        script = {
           title_page: user.titlePage.map(([k, v]) =>
-            k.toLowerCase() === "title" ? ([k, name.trim().toUpperCase()] as [string, string]) : ([k, v] as [string, string]),
+            k.toLowerCase() === "title"
+              ? ([k, name.trim().toUpperCase()] as [string, string])
+              : ([k, v] as [string, string]),
           ),
           elements: user.elements,
         };
+        format = user.format ?? null;
+      } else if (builtin) {
+        const text = builtin.boilerplate.split("{TITLE}").join(name.trim().toUpperCase());
+        script = await api.parseFountain(text);
+        format = builtin.format ?? null;
+        if (builtin.minutesPerPage && !format) {
+          format = { ...defaultFormatSpec(), minutes_per_page: builtin.minutesPerPage };
+        }
+      }
+      if (script) {
         const st = useApp.getState();
         st.setTitlePage(script.title_page);
-        st.setSceneNumbering(user.sceneNumbering);
-        // The editor mounts asynchronously after loadProject; retry briefly.
+        if (user) st.setSceneNumbering(user.sceneNumbering);
+        if (format || st.projectMeta) {
+          const meta = { ...st.projectMeta!, format };
+          useApp.setState({ projectMeta: meta });
+          await api.saveProjectMeta(projectPath, meta).catch(() => {});
+        }
+        // The editor mounts asynchronously; retry briefly.
+        const content = script;
         const stamp = (attempt = 0) => {
           if (getEditorView()) {
-            replaceEditorScript(script);
+            replaceEditorScript(content);
             void useApp.getState().saveNow();
           } else if (attempt < 20) {
             setTimeout(() => stamp(attempt + 1), 50);
@@ -210,16 +239,17 @@ function TemplateGallery({ onClose, onError }: { onClose: () => void; onError: (
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
       <div
+        ref={trapRef}
         className="modal"
         style={{ width: 640 }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="New project"
+        aria-label={t("start.newProject")}
       >
-        <h2 className="modal-title">New Project</h2>
+        <h2 className="modal-title">{t("start.newProject")}</h2>
         <label className="field-label" htmlFor="np-name">
-          Project name
+          {t("start.projectName")}
         </label>
         <input
           id="np-name"
@@ -227,48 +257,61 @@ function TemplateGallery({ onClose, onError }: { onClose: () => void; onError: (
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && create()}
-          placeholder="My Screenplay"
+          placeholder={t("start.projectNamePlaceholder")}
           autoFocus
         />
 
-        <label className="field-label">Template</label>
-        <div className="template-grid" role="radiogroup" aria-label="Project template">
-          {BUILTIN_TEMPLATES.map((t) => (
+        <label className="field-label">{t("start.template")}</label>
+        <div role="radiogroup" aria-label={t("start.template")}>
+          {TEMPLATE_CATEGORIES.map((cat) => {
+            const group = builtins.filter((x) => x.category === cat.id);
+            if (group.length === 0) return null;
+            return (
+              <div key={cat.id}>
+                <div className="template-cat">{t(cat.labelKey)}</div>
+                <div className="template-grid">
+                  {group.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      className={`template-card${selected === tpl.id ? " selected" : ""}`}
+                      role="radio"
+                      aria-checked={selected === tpl.id}
+                      onClick={() => setSelected(tpl.id)}
+                    >
+                      <div className="template-page" aria-hidden="true" />
+                      <div className="template-name">{tpl.name}</div>
+                      <div className="template-desc">{tpl.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {userTemplates.length > 0 && <div className="template-cat">{t("template.catYours")}</div>}
+          <div className="template-grid">
+          {userTemplates.map((tpl) => (
             <button
-              key={t.id}
-              className={`template-card${selected === t.id ? " selected" : ""}`}
+              key={tpl.id}
+              className={`template-card${selected === tpl.id ? " selected" : ""}`}
               role="radio"
-              aria-checked={selected === t.id}
-              onClick={() => setSelected(t.id)}
-            >
-              <div className="template-page" aria-hidden="true" />
-              <div className="template-name">{t.name}</div>
-              <div className="template-desc">{t.description}</div>
-            </button>
-          ))}
-          {userTemplates.map((t) => (
-            <button
-              key={t.id}
-              className={`template-card${selected === t.id ? " selected" : ""}`}
-              role="radio"
-              aria-checked={selected === t.id}
-              onClick={() => setSelected(t.id)}
+              aria-checked={selected === tpl.id}
+              onClick={() => setSelected(tpl.id)}
             >
               <span
                 className="template-delete"
                 role="button"
                 tabIndex={0}
-                aria-label={`Delete template ${t.name}`}
+                aria-label={t("start.deleteTemplate", { name: tpl.name })}
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteUserTemplate(t.id);
+                  deleteUserTemplate(tpl.id);
                   setUserTemplates(listUserTemplates());
-                  if (selected === t.id) setSelected("feature");
+                  if (selected === tpl.id) setSelected("feature");
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.stopPropagation();
-                    deleteUserTemplate(t.id);
+                    deleteUserTemplate(tpl.id);
                     setUserTemplates(listUserTemplates());
                   }
                 }}
@@ -276,18 +319,19 @@ function TemplateGallery({ onClose, onError }: { onClose: () => void; onError: (
                 ✕
               </span>
               <div className="template-page" aria-hidden="true" />
-              <div className="template-name">{t.name}</div>
-              <div className="template-desc">{t.description || "Your saved template"}</div>
+              <div className="template-name">{tpl.name}</div>
+              <div className="template-desc">{tpl.description || t("start.yourTemplate")}</div>
             </button>
           ))}
+          </div>
         </div>
 
         <div className="modal-actions">
           <button className="btn btn-primary" onClick={create} disabled={busy}>
-            {busy ? "Creating…" : "Create Project"}
+            {busy ? t("start.creating") : t("start.create")}
           </button>
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("start.cancel")}
           </button>
         </div>
       </div>

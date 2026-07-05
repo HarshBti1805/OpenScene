@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../store";
 import { getEditorView } from "../editor/editorRef";
+import { t } from "../i18n";
+import { useFocusTrap } from "../ui/useFocusTrap";
 
 interface Occurrence {
   from: number;
@@ -71,6 +73,7 @@ export function RenameDialog() {
   const setStatus = useApp((s) => s.setStatus);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const trapRef = useFocusTrap<HTMLDivElement>(isOpen, () => setOpen(false));
 
   const characters = useMemo(() => {
     const names = new Set<string>();
@@ -87,9 +90,11 @@ export function RenameDialog() {
 
   if (!isOpen) return null;
 
-  const apply = () => {
+  const apply = async () => {
     const view = getEditorView();
     if (!view || !to.trim() || occurrences.length === 0) return;
+    // Mass rename is a milestone: zipped backup first.
+    await useApp.getState().milestoneBackup("rename");
     const replacementRaw = to.trim();
     let tr = view.state.tr;
     for (const occ of [...occurrences].sort((a, b) => b.from - a.from)) {
@@ -98,7 +103,7 @@ export function RenameDialog() {
       tr = tr.insertText(replacement, occ.from, occ.to);
     }
     view.dispatch(tr);
-    setStatus(`Renamed ${from.toUpperCase()} → ${replacementRaw} (${occurrences.length} occurrences)`);
+    setStatus(t("rename.done", { from: from.toUpperCase(), to: replacementRaw, n: occurrences.length }));
     setOpen(false);
     setFrom("");
     setTo("");
@@ -106,14 +111,14 @@ export function RenameDialog() {
 
   return (
     <div className="modal-backdrop" onClick={() => setOpen(false)} role="presentation">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Rename character">
-        <h2 className="modal-title">Rename Character</h2>
+      <div ref={trapRef} className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={t("rename.title")}>
+        <h2 className="modal-title">{t("rename.title")}</h2>
         <div className="modal-field">
           <label className="field-label" htmlFor="rename-from">
-            Character
+            {t("rename.character")}
           </label>
           <select id="rename-from" className="input" value={from} onChange={(e) => setFrom(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t("rename.choose")}</option>
             {characters.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -123,19 +128,19 @@ export function RenameDialog() {
         </div>
         <div className="modal-field">
           <label className="field-label" htmlFor="rename-to">
-            New name
+            {t("rename.newName")}
           </label>
           <input
             id="rename-to"
             className="input"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            placeholder="NEW NAME"
+            placeholder={t("rename.newNamePlaceholder")}
           />
         </div>
         {from && (
           <div className="rename-preview">
-            <div className="field-label">{occurrences.length} occurrences</div>
+            <div className="field-label">{t("rename.occurrences", { n: occurrences.length })}</div>
             <div className="rename-list">
               {occurrences.slice(0, 50).map((o, i) => (
                 <div key={i} className="rename-item">
@@ -147,10 +152,10 @@ export function RenameDialog() {
         )}
         <div className="modal-actions">
           <button className="btn btn-primary" onClick={apply} disabled={!from || !to.trim() || occurrences.length === 0}>
-            Rename {occurrences.length > 0 ? `(${occurrences.length})` : ""}
+            {t("rename.apply", { suffix: occurrences.length > 0 ? `(${occurrences.length})` : "" })}
           </button>
           <button className="btn" onClick={() => setOpen(false)}>
-            Cancel
+            {t("rename.cancel")}
           </button>
         </div>
       </div>

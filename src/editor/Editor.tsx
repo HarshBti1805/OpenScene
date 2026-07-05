@@ -16,9 +16,15 @@ import {
 import { smartTypePlugin } from "./smarttype";
 import { paginationPlugin } from "./pagination";
 import { lineFocusPlugin } from "./lineFocus";
+import { spellPlugin } from "./spellcheck";
+import { revisionMarkPlugin } from "./revisionMark";
+import { lockGuardPlugin } from "./lockGuard";
 import { setEditorView } from "./editorRef";
+import { initUndoLog, recordTransaction, restoreUndoLog } from "./persistUndo";
+import { api } from "../api";
 import { useApp } from "../store";
 import type { ElementKind } from "../types";
+import { t } from "../i18n";
 
 const KIND_SHORTCUTS: [string, ElementKind][] = [
   ["Mod-1", "scene_heading"],
@@ -28,13 +34,22 @@ const KIND_SHORTCUTS: [string, ElementKind][] = [
   ["Mod-5", "dialogue"],
   ["Mod-6", "transition"],
   ["Mod-7", "shot"],
+  ["Mod-8", "act_header"],
+  ["Mod-9", "lyrics"],
 ];
 
 export function Editor() {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const projectPath = useApp((s) => s.projectPath);
+  const docKey = useApp((s) => s.docKey());
   const lineFocus = useApp((s) => s.lineFocus);
+  const readOnly = useApp((s) => s.readOnly);
+
+  // Reflect read-only mode without recreating the editor.
+  useEffect(() => {
+    viewRef.current?.setProps({ editable: () => !readOnly });
+  }, [readOnly]);
 
   // Re-evaluate the line-focus decoration when the toggle flips.
   useEffect(() => {
@@ -74,22 +89,29 @@ export function Editor() {
         smartTypePlugin(),
         pagination.plugin,
         lineFocusPlugin(() => useApp.getState().lineFocus),
+        spellPlugin(),
+        revisionMarkPlugin(),
+        lockGuardPlugin(),
       ],
     });
 
+    let userEdited = false;
     const view = new EditorView(hostRef.current, {
       state,
+      editable: () => !useApp.getState().readOnly,
       attributes: {
         role: "textbox",
         "aria-multiline": "true",
-        "aria-label": "Screenplay editor",
+        "aria-label": t("editor.aria"),
         class: "script-page",
-        spellcheck: "true",
+        spellcheck: "false",
       },
       dispatchTransaction(tr) {
         const newState = view.state.apply(tr);
         view.updateState(newState);
         if (tr.docChanged) {
+          userEdited = true;
+          recordTransaction(tr);
           const st = useApp.getState();
           st.setScript(docToScript(newState.doc, st.titlePage));
           st.markDirty();
@@ -104,17 +126,35 @@ export function Editor() {
     setEditorView(view, pagination);
     view.focus();
 
+    // Persisted undo: restore the previous session's undo stack if the log
+    // still reproduces the document on disk and the user hasn't typed yet.
+    // Per-document: drafts persist their own stacks.
+    initUndoLog(view.state.doc);
+    api
+      .loadUndoState(projectPath, useApp.getState().snapshotStem())
+      .then((saved) => {
+        if (saved && !userEdited && viewRef.current === view) {
+          restoreUndoLog(view, saved);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       setEditorView(null, null);
       view.destroy();
       viewRef.current = null;
     };
-    // Recreate the editor only when a different project is opened.
+    // Recreate the editor when a different document (script/draft) opens,
+    // so undo history never crosses document boundaries.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectPath]);
+  }, [docKey]);
 
+  const showRevMarks = useApp((s) => s.showRevisionMarks);
   return (
-    <div className={`editor-scroll${lineFocus ? " line-focus" : ""}`} id="editor-scroll">
+    <div
+      className={`editor-scroll${lineFocus ? " line-focus" : ""}${showRevMarks ? " show-rev-marks" : ""}`}
+      id="editor-scroll"
+    >
       <div ref={hostRef} className="editor-host" />
     </div>
   );

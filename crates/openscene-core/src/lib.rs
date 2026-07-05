@@ -12,10 +12,13 @@
 //! - `stats`     : script statistics
 
 pub mod backup;
+pub mod crdt;
 pub mod fdx;
 pub mod fountain;
 pub mod model;
 pub mod paginate;
 pub mod pdf;
+pub mod safety;
 pub mod snapshots;
+pub mod spell;
 pub mod stats;

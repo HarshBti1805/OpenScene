@@ -8,7 +8,9 @@
 //! (600/1000 * 12) and we use 12pt line leading (6 lines/inch).
 
 use crate::model::{LayoutOptions, SceneNumbering, Script, TitlePage};
-use crate::paginate::{paginate, Layout, LineKind, SCENE_NUM_LEFT_COL, SCENE_NUM_RIGHT_COL};
+use crate::paginate::{
+    paginate, Layout, LineKind, ACTION_COL, SCENE_NUM_LEFT_COL, SCENE_NUM_RIGHT_COL,
+};
 
 const PAGE_W: f64 = 612.0;
 const PAGE_H: f64 = 792.0;
@@ -171,17 +173,48 @@ fn title_page_stream(tp: &TitlePage) -> String {
     out
 }
 
+const REVISION_MARK_COL: usize = 82;
+
 fn page_stream(page: &crate::paginate::Page, opts: &LayoutOptions, show_page_number: bool) -> String {
     let mut out = String::new();
     if show_page_number {
-        let label = format!("{}.", page.number);
+        // Locked pages print their frozen labels (12, 12A, ...).
+        let label = if page.label.is_empty() {
+            format!("{}.", page.number)
+        } else {
+            format!("{}.", page.label)
+        };
         let x = col_x(SCENE_NUM_RIGHT_COL) - label.chars().count() as f64 * CHAR_W + 2.0 * CHAR_W;
         text_op(&mut out, "F0", x, PAGE_H - PAGE_NUM_LINE * LINE_H, &label);
     }
+    // Revised pages carry the revision set's label + date in the header
+    // (standard practice for white-paper PDF distribution).
+    if let Some(label) = &opts.revision_label {
+        let has_revised = page.lines.iter().any(|l| l.revised);
+        if has_revised {
+            text_op(
+                &mut out,
+                "F0",
+                col_x(ACTION_COL),
+                PAGE_H - PAGE_NUM_LINE * LINE_H,
+                label,
+            );
+        }
+    }
     for (i, line) in page.lines.iter().enumerate() {
         let y = line_y(i);
-        // Final Draft default: everything plain Courier, headings uppercase.
-        let font = "F0";
+        // Plain Courier throughout; lyrics render oblique.
+        let font = if line.kind == LineKind::Lyrics { "F2" } else { "F0" };
+        // Revision asterisk in the right margin.
+        if line.revised && opts.show_revision_marks {
+            text_op(&mut out, "F0", col_x(REVISION_MARK_COL), y, "*");
+        }
+        // Underline (act headers, multicam sluglines).
+        if line.underline && !line.text.is_empty() {
+            let x0 = col_x(line.col);
+            let x1 = x0 + line.text.chars().count() as f64 * CHAR_W;
+            out.push_str(&format!("{:.2} {:.2} m {:.2} {:.2} l S\n", x0, y - 1.5, x1, y - 1.5));
+        }
         match line.kind {
             LineKind::Blank => {}
             LineKind::DualColumns => {
@@ -212,19 +245,78 @@ fn page_stream(page: &crate::paginate::Page, opts: &LayoutOptions, show_page_num
     out
 }
 
+/// Parse JPEG dimensions from SOF markers (baseline + progressive).
+fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
+    }
+    let mut i = 2usize;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        let marker = bytes[i + 1];
+        if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+            let h = u32::from(bytes[i + 5]) << 8 | u32::from(bytes[i + 6]);
+            let w = u32::from(bytes[i + 7]) << 8 | u32::from(bytes[i + 8]);
+            return Some((w, h));
+        }
+        let len = (usize::from(bytes[i + 2]) << 8) | usize::from(bytes[i + 3]);
+        i += 2 + len;
+    }
+    None
+}
+
 /// Render a script to PDF bytes.
 pub fn render(script: &Script, opts: &LayoutOptions) -> Vec<u8> {
+    render_with_image(script, opts, None)
+}
+
+/// Render with an optional JPEG title-page image (never in script pages).
+pub fn render_with_image(script: &Script, opts: &LayoutOptions, title_jpeg: Option<&[u8]>) -> Vec<u8> {
     let layout: Layout = paginate(script, opts);
     let mut b = PdfBuilder::new();
 
-    // Fonts (objects 1 and 2).
+    // Fonts: plain, bold, oblique (lyrics) — all PDF built-ins.
     let f0 = b.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>".to_vec());
     let f1 = b.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>".to_vec());
+    let f2 = b.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Oblique /Encoding /WinAnsiEncoding >>".to_vec());
+
+    // Optional title-page image as a JPEG XObject (DCTDecode passthrough).
+    let mut image_obj: Option<(usize, u32, u32)> = None;
+    if let Some(jpeg) = title_jpeg {
+        if let Some((w, h)) = jpeg_dimensions(jpeg) {
+            let mut body = format!(
+                "<< /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",
+                w,
+                h,
+                jpeg.len()
+            )
+            .into_bytes();
+            body.extend_from_slice(jpeg);
+            body.extend_from_slice(b"\nendstream");
+            let id = b.add(body);
+            image_obj = Some((id, w, h));
+        }
+    }
 
     let has_title = !script.title_page.is_empty();
     let mut content_ids: Vec<usize> = Vec::new();
     if has_title {
-        let stream = title_page_stream(&script.title_page);
+        let mut stream = title_page_stream(&script.title_page);
+        if let Some((_, w, h)) = image_obj {
+            // Centered below the byline block; fits within 2.5" x 2.8".
+            let scale = (180.0 / w as f64).min(200.0 / h as f64);
+            let draw_w = w as f64 * scale;
+            let draw_h = h as f64 * scale;
+            let x = (PAGE_W - draw_w) / 2.0;
+            let y = 240.0 - draw_h / 2.0;
+            stream.push_str(&format!(
+                "q {:.2} 0 0 {:.2} {:.2} {:.2} cm /Im0 Do Q\n",
+                draw_w, draw_h, x, y
+            ));
+        }
         content_ids.push(add_stream(&mut b, &stream));
     }
     for page in &layout.pages {
@@ -239,11 +331,15 @@ pub fn render(script: &Script, opts: &LayoutOptions) -> Vec<u8> {
     let pages_obj = first_page_obj + n_pages;
     let catalog_obj = pages_obj + 1;
 
+    let xobject = match image_obj {
+        Some((id, _, _)) => format!(" /XObject << /Im0 {} 0 R >>", id),
+        None => String::new(),
+    };
     for content in &content_ids {
         b.add(
             format!(
-                "<< /Type /Page /Parent {} 0 R /MediaBox [0 0 {} {}] /Contents {} 0 R /Resources << /Font << /F0 {} 0 R /F1 {} 0 R >> >> >>",
-                pages_obj, PAGE_W, PAGE_H, content, f0, f1
+                "<< /Type /Page /Parent {} 0 R /MediaBox [0 0 {} {}] /Contents {} 0 R /Resources << /Font << /F0 {} 0 R /F1 {} 0 R /F2 {} 0 R >>{} >> >>",
+                pages_obj, PAGE_W, PAGE_H, content, f0, f1, f2, xobject
             )
             .into_bytes(),
         );
@@ -289,6 +385,30 @@ mod tests {
         assert!(text.ends_with("%%EOF\n"));
         // Two pages: title + one body page.
         assert!(text.contains("/Count 2"));
+    }
+
+    #[test]
+    fn revision_marks_render_asterisks_and_header() {
+        let mut s = Script::default();
+        let mut a = Element::new(ElementKind::Action, "Revised line.");
+        a.revision = Some("blue-1".into());
+        s.elements.push(a);
+        let opts = LayoutOptions {
+            revision_label: Some("Blue Draft — 2026-07-05".into()),
+            ..LayoutOptions::default()
+        };
+        let bytes = render(&s, &opts);
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("(*) Tj"), "margin asterisk expected");
+        assert!(text.contains("Blue Draft"), "revision header expected");
+        // Marks hidden when disabled.
+        let opts_off = LayoutOptions {
+            show_revision_marks: false,
+            revision_label: None,
+            ..LayoutOptions::default()
+        };
+        let text2 = String::from_utf8_lossy(&render(&s, &opts_off)).to_string();
+        assert!(!text2.contains("(*) Tj"));
     }
 
     #[test]

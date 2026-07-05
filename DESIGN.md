@@ -138,6 +138,39 @@ Rules:
 6. Verify in all three themes plus reduced-motion before shipping.
 7. Never style inside `.script-page` beyond the locked column layout.
 
+## New surfaces added in the MVP-completion pass
+
+All follow the checklist below; verify against it when touching them:
+
+- **Spell squiggle + popup**: dotted `--os-danger` underline (never animated); popup follows the SmartType pattern (`.spell-popup`, menu roles, amber hover inversion).
+- **Documents section** (navigator top): edge-code group labels, amber `aria-current` tint for the active document, hover-revealed delete.
+- **Note editor**: page-toned Markdown surface (`--os-page`/`--os-page-ink`), display-type headings in preview, 88ch measure.
+- **Revisions panel**: revision-paper swatches use fixed industry colors (`REVISION_SWATCHES` — document data, like scene label colors, not theme tokens); active set gets the amber wash; editor margin asterisks are `--os-accent`.
+- **Compare drafts**: diff lines in mono at `--os-text-xs`; additions use the fixed note-green, removals `--os-danger`.
+- **Safety dialogs** (recovery/conflict): `alertdialog` on scrim, danger accents reserved for the reason banner; every path is a labeled button.
+- **UI zoom**: chrome surfaces scale via `zoom: var(--os-ui-zoom)`; never apply it to `.script-page`.
+
+## Surfaces added in the revision-completion pass
+
+- **Lock/Unlock** (Revisions panel): confirmation `alertdialog` explains
+  consequences; locked badge in the status bar is `--os-accent`; A-page
+  indicators in the navigator are amber bold text (never color-only — the
+  letter suffix carries the meaning). OMITTED rows strike through in muted ink.
+- **Scope chips** (find bar) and **scene filter bar**: pill chips, amber
+  inversion when active, edge-code "7/40 scenes" count with Clear.
+- **Format editor**: mono numeric inputs (`.fmt-num`), Industry-standard /
+  Non-standard badges, reset button; every change repaginates live.
+- **Template gallery categories**: display-type category rules
+  (`.template-cat`) group Film/TV/Stage/Audio/Structure starters.
+- **Table read bar**: bottom dock strip, display-type title in amber,
+  play/stop as small buttons, voice assignment via paired selects.
+- **Sprints & streaks** (stats panel): mono countdown clock in amber; 14-day
+  streak bars are `--os-line-strong`, lit days `--os-accent`.
+- **Pins**: amber chip rail (`.pin-chip`), hover inverts to accent-ink;
+  star toggles appear on hover and stay visible when pinned.
+- **Card images**: cover-fit thumbnails with a scrim-backed remove button.
+- **Alternate takes**: inline amber chips (`.note-alt`) on dialogue.
+
 ## Custom titlebar
 
 - macOS: native traffic lights via `titleBarStyle: Overlay` +

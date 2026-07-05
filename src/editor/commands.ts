@@ -27,6 +27,8 @@ export const ENTER_NEXT: Record<string, ElementKind> = {
   dialogue: "character",
   transition: "scene_heading",
   shot: "action",
+  act_header: "scene_heading",
+  lyrics: "lyrics",
 };
 
 export const TAB_CYCLE: Record<string, ElementKind> = {
@@ -77,7 +79,13 @@ export function setElementKind(kind: ElementKind): Command {
 
 /** Uppercase transforms for kinds that are conventionally uppercase. */
 function autoFormatBlock(tr: Transaction, pos: number, kind: ElementKind): Transaction {
-  if (kind !== "scene_heading" && kind !== "character" && kind !== "transition" && kind !== "shot") {
+  if (
+    kind !== "scene_heading" &&
+    kind !== "character" &&
+    kind !== "transition" &&
+    kind !== "shot" &&
+    kind !== "act_header"
+  ) {
     return tr;
   }
   const node = tr.doc.nodeAt(pos);

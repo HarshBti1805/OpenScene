@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { api } from "../api";
 import { useApp } from "../store";
+import { convertAssetToJpeg } from "../ui/useAsset";
 import type { TitlePage } from "../types";
+import { t } from "../i18n";
+import { useFocusTrap } from "../ui/useFocusTrap";
 
 const FIELDS: { key: string; label: string; multiline?: boolean }[] = [
-  { key: "Title", label: "Title" },
-  { key: "Credit", label: "Credit (e.g. written by)" },
-  { key: "Author", label: "Byline / Author" },
-  { key: "Draft date", label: "Draft date" },
-  { key: "Contact", label: "Contact", multiline: true },
+  { key: "Title", label: t("titlePage.fieldTitle") },
+  { key: "Credit", label: t("titlePage.fieldCredit") },
+  { key: "Author", label: t("titlePage.fieldAuthor") },
+  { key: "Draft date", label: t("titlePage.fieldDraftDate") },
+  { key: "Contact", label: t("titlePage.fieldContact"), multiline: true },
 ];
 
 export function TitlePageEditor() {
@@ -16,6 +21,7 @@ export function TitlePageEditor() {
   const titlePage = useApp((s) => s.titlePage);
   const setTitlePage = useApp((s) => s.setTitlePage);
   const [values, setValues] = useState<Record<string, string>>({});
+  const trapRef = useFocusTrap<HTMLDivElement>(isOpen, () => setOpen(false));
 
   useEffect(() => {
     if (isOpen) {
@@ -27,6 +33,24 @@ export function TitlePageEditor() {
 
   if (!isOpen) return null;
 
+  const pickImage = async () => {
+    const st = useApp.getState();
+    if (!st.projectPath) return;
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+    });
+    if (typeof picked !== "string") return;
+    try {
+      const raw = await api.importNoteAsset(st.projectPath, picked);
+      // The PDF embeds JPEG; convert other formats via canvas (offline).
+      const jpeg = await convertAssetToJpeg(st.projectPath, raw);
+      setValues((v) => ({ ...v, Image: jpeg }));
+    } catch (e) {
+      st.setStatus(String(e));
+    }
+  };
+
   const apply = () => {
     const tp: TitlePage = [];
     // Preserve field order, keep unknown existing keys at the end.
@@ -34,8 +58,9 @@ export function TitlePageEditor() {
       const v = (values[f.key] ?? "").trim();
       if (v) tp.push([f.key, v]);
     }
+    if ((values["Image"] ?? "").trim()) tp.push(["Image", values["Image"].trim()]);
     for (const [k, v] of titlePage) {
-      if (!FIELDS.some((f) => f.key === k) && v.trim()) tp.push([k, v]);
+      if (!FIELDS.some((f) => f.key === k) && k !== "Image" && v.trim()) tp.push([k, v]);
     }
     setTitlePage(tp);
     setOpen(false);
@@ -43,8 +68,30 @@ export function TitlePageEditor() {
 
   return (
     <div className="modal-backdrop" onClick={() => setOpen(false)} role="presentation">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Title page editor">
-        <h2 className="modal-title">Title Page</h2>
+      <div ref={trapRef} className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={t("titlePage.title")}>
+        <h2 className="modal-title">{t("titlePage.title")}</h2>
+        <div className="modal-field">
+          <label className="field-label">{t("titlePage.image")}</label>
+          <p className="panel-hint" style={{ padding: 0 }}>
+            {t("titlePage.imageHint")}
+          </p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="btn btn-small" onClick={() => void pickImage()}>
+              {t("titlePage.pickImage")}
+            </button>
+            {values["Image"] && (
+              <>
+                <span className="edgecode">{values["Image"]}</span>
+                <button
+                  className="btn btn-small btn-ghost"
+                  onClick={() => setValues((v) => ({ ...v, Image: "" }))}
+                >
+                  {t("titlePage.removeImage")}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
         {FIELDS.map((f) => (
           <div key={f.key} className="modal-field">
             <label className="field-label" htmlFor={`tp-${f.key}`}>
@@ -70,10 +117,10 @@ export function TitlePageEditor() {
         ))}
         <div className="modal-actions">
           <button className="btn btn-primary" onClick={apply}>
-            Save
+            {t("titlePage.save")}
           </button>
           <button className="btn" onClick={() => setOpen(false)}>
-            Cancel
+            {t("titlePage.cancel")}
           </button>
         </div>
       </div>

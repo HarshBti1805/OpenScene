@@ -45,7 +45,16 @@ function inlineContent(text: string, notes: Note[]): PMNode[] {
 
 function elementToNode(e: ScriptElement): PMNode {
   if (e.kind === "page_break") return schema.nodes.page_break.create();
-  const attrs: Record<string, unknown> = { dual: e.dual ?? null };
+  if (e.kind === "omitted") {
+    return schema.nodes.omitted.create({
+      scene_number: e.scene_number ?? null,
+      revision: e.revision ?? null,
+    });
+  }
+  const attrs: Record<string, unknown> = {
+    dual: e.dual ?? null,
+    revision: e.revision ?? null,
+  };
   if (e.kind === "scene_heading") {
     attrs.scene_number = e.scene_number ?? null;
     attrs.synopsis = e.synopsis ?? null;
@@ -64,6 +73,12 @@ export function scriptToDoc(script: Script): PMNode {
 
 export function nodeToElement(node: PMNode): ScriptElement {
   if (node.type.name === "page_break") return { kind: "page_break", text: "" };
+  if (node.type.name === "omitted") {
+    const el: ScriptElement = { kind: "omitted", text: "" };
+    if (node.attrs.scene_number) el.scene_number = node.attrs.scene_number;
+    if (node.attrs.revision) el.revision = node.attrs.revision;
+    return el;
+  }
   let text = "";
   const notes: Note[] = [];
   node.forEach((child) => {
@@ -81,6 +96,7 @@ export function nodeToElement(node: PMNode): ScriptElement {
   });
   const el: ScriptElement = { kind: node.type.name as ElementKind, text };
   if (node.attrs.dual) el.dual = node.attrs.dual;
+  if (node.attrs.revision) el.revision = node.attrs.revision;
   if (notes.length) el.notes = notes;
   if (node.type.name === "scene_heading") {
     if (node.attrs.scene_number) el.scene_number = node.attrs.scene_number;

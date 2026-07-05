@@ -10,6 +10,7 @@
 
 import { Plugin, PluginKey } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
+import { t } from "../i18n";
 
 const KEY = new PluginKey("smarttype");
 
@@ -95,21 +96,43 @@ function suggestionsFor(view: EditorView): Suggestion[] {
   return [];
 }
 
+let popupSeq = 0;
+
 class SmartTypeView {
   view: EditorView;
   dom: HTMLDivElement;
   items: Suggestion[] = [];
   selected = 0;
   visible = false;
+  popupId: string;
 
   constructor(view: EditorView) {
     this.view = view;
+    this.popupId = `smarttype-${++popupSeq}`;
     this.dom = document.createElement("div");
     this.dom.className = "smarttype-popup";
+    this.dom.id = this.popupId;
     this.dom.setAttribute("role", "listbox");
-    this.dom.setAttribute("aria-label", "SmartType suggestions");
+    this.dom.setAttribute("aria-label", t("editor.smartTypeAria"));
     this.dom.style.display = "none";
     document.body.appendChild(this.dom);
+    // Combobox semantics on the editable surface itself.
+    view.dom.setAttribute("aria-autocomplete", "list");
+    view.dom.setAttribute("aria-expanded", "false");
+  }
+
+  /** Reflect open/selection state onto the editor element for AT users. */
+  private syncAria() {
+    const editor = this.view.dom;
+    if (this.visible) {
+      editor.setAttribute("aria-expanded", "true");
+      editor.setAttribute("aria-controls", this.popupId);
+      editor.setAttribute("aria-activedescendant", `${this.popupId}-opt-${this.selected}`);
+    } else {
+      editor.setAttribute("aria-expanded", "false");
+      editor.removeAttribute("aria-controls");
+      editor.removeAttribute("aria-activedescendant");
+    }
   }
 
   update(view: EditorView) {
@@ -130,6 +153,7 @@ class SmartTypeView {
     this.dom.style.left = `${coords.left}px`;
     this.dom.style.top = `${coords.bottom + 4}px`;
     this.visible = true;
+    this.syncAria();
   }
 
   render() {
@@ -137,6 +161,7 @@ class SmartTypeView {
     this.items.forEach((item, i) => {
       const el = document.createElement("div");
       el.className = `smarttype-item${i === this.selected ? " selected" : ""}`;
+      el.id = `${this.popupId}-opt-${i}`;
       el.setAttribute("role", "option");
       el.setAttribute("aria-selected", String(i === this.selected));
       el.textContent = item.label;
@@ -146,6 +171,7 @@ class SmartTypeView {
       });
       this.dom.appendChild(el);
     });
+    this.syncAria();
   }
 
   accept(i: number) {
@@ -163,11 +189,17 @@ class SmartTypeView {
       this.dom.style.display = "none";
       this.visible = false;
       this.selected = 0;
+      this.syncAria();
     }
   }
 
   destroy() {
     this.dom.remove();
+    const editor = this.view.dom;
+    editor.removeAttribute("aria-autocomplete");
+    editor.removeAttribute("aria-expanded");
+    editor.removeAttribute("aria-controls");
+    editor.removeAttribute("aria-activedescendant");
   }
 
   handleKey(event: KeyboardEvent): boolean {

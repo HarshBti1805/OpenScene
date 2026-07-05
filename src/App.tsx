@@ -16,6 +16,12 @@ import { RenameDialog } from "./components/RenameDialog";
 import { FormatPanel } from "./components/FormatPanel";
 import { Titlebar } from "./components/Titlebar";
 import { Toolbar, StatusBar } from "./components/Toolbar";
+import { ConflictDialog, ReadOnlyBanner, RecoveryDialog } from "./components/SafetyDialogs";
+import { NoteEditor } from "./components/NoteEditor";
+import { RevisionsPanel } from "./components/RevisionsPanel";
+import { TableReadBar } from "./components/TableRead";
+import { serializeUndoLog } from "./editor/persistUndo";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const AUTOSAVE_MS = 2000;
 const AUTO_SNAPSHOT_MS = 10 * 60 * 1000;
@@ -55,28 +61,65 @@ export default function App() {
   }, [projectPath]);
 
   // Autosave loop: debounced continuous save; save on window blur and close.
+  // Each save also persists the undo log so relaunch restores the undo stack.
   useEffect(() => {
     if (!projectPath) return;
-    const interval = setInterval(() => {
+    const saveAll = async () => {
       const s = useApp.getState();
-      if (s.dirty) void s.saveNow();
-    }, AUTOSAVE_MS);
-    const onBlur = () => {
-      const s = useApp.getState();
-      if (s.dirty) void s.saveNow();
+      if (s.readOnly) return;
+      if (s.dirty) await s.saveNow();
+      const undoJson = serializeUndoLog();
+      if (undoJson && s.projectPath) {
+        await api.saveUndoState(s.projectPath, undoJson, s.snapshotStem()).catch(() => {});
+      }
     };
-    const onBeforeUnload = () => {
-      const s = useApp.getState();
-      if (s.dirty) void s.saveNow();
-    };
+    const interval = setInterval(() => void saveAll(), AUTOSAVE_MS);
+    const onBlur = () => void saveAll();
     window.addEventListener("blur", onBlur);
-    window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       clearInterval(interval);
       window.removeEventListener("blur", onBlur);
-      window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [projectPath]);
+
+  // Writer heartbeat while the project is open (single-writer sync safety).
+  useEffect(() => {
+    if (!projectPath || useApp.getState().readOnly) return;
+    const interval = setInterval(() => {
+      void api.heartbeatProject(projectPath).catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [projectPath]);
+
+  // Backup on quit: intercept window close, save + zip, then really close.
+  useEffect(() => {
+    let closing = false;
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (closing) return;
+        const s = useApp.getState();
+        if (!s.projectPath) return; // nothing open: close normally
+        event.preventDefault();
+        closing = true;
+        try {
+          if (s.dirty && !s.readOnly) await s.saveNow();
+          const undoJson = serializeUndoLog();
+          if (undoJson && !s.readOnly) {
+            await api.saveUndoState(s.projectPath, undoJson, s.snapshotStem()).catch(() => {});
+          }
+          if (!s.readOnly) {
+            await s.milestoneBackup("quit");
+            await api.releaseProject(s.projectPath).catch(() => {});
+          }
+        } finally {
+          await getCurrentWindow().destroy();
+        }
+      })
+      .then((fn) => (unlisten = fn))
+      .catch(() => {});
+    return () => unlisten?.();
+  }, []);
 
   // Automatic timed snapshots (only when the script actually changed).
   useEffect(() => {
@@ -90,7 +133,7 @@ export default function App() {
       if (textKey === lastSnapshotText) return;
       lastSnapshotText = textKey;
       try {
-        await api.takeSnapshot(s.projectPath, full, null, true);
+        await api.takeSnapshot(s.projectPath, full, null, true, s.snapshotStem());
       } catch {
         // Snapshots must never interrupt writing.
       }
@@ -113,6 +156,7 @@ export default function App() {
         </div>
         <CommandPalette />
         <FormatPanel />
+        <RecoveryDialog />
       </div>
     );
   }
@@ -121,26 +165,32 @@ export default function App() {
     <div className={`app-shell${distractionFree ? " distraction-free" : ""}`}>
       <Titlebar />
       <Toolbar />
+      <ReadOnlyBanner />
       <FindReplace />
       <div className="app-main view-enter">
         {panel === "navigator" && <SceneNavigator />}
         {panel === "notes" && <NotesPanel />}
         {panel === "stats" && <StatsPanel />}
         {panel === "snapshots" && <SnapshotsPanel />}
+        {panel === "revisions" && <RevisionsPanel />}
         <div className="app-content">
-          {/* Editor stays mounted in Cards view (hidden) so cards can edit
-              synopses/reorder through the same undoable document. */}
-          <div style={{ display: view === "cards" ? "none" : "contents" }}>
+          {/* Editor stays mounted in Cards/Note views (hidden) so cards can
+              edit synopses/reorder through the same undoable document. */}
+          <div style={{ display: view === "write" ? "contents" : "none" }}>
             <Editor />
           </div>
           {view === "cards" && <IndexCards />}
+          {view === "note" && <NoteEditor />}
         </div>
       </div>
+      <TableReadBar />
       <StatusBar />
       <CommandPalette />
       <TitlePageEditor />
       <RenameDialog />
       <FormatPanel />
+      <RecoveryDialog />
+      <ConflictDialog />
     </div>
   );
 }

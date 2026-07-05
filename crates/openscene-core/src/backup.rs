@@ -40,8 +40,8 @@ fn add_dir(
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
-        // Never back up temp files.
-        if name_str.ends_with(".tmp~") {
+        // Never back up temp files or the advisory writer heartbeat.
+        if name_str.ends_with(".tmp~") || name_str == crate::safety::HEARTBEAT_FILE {
             continue;
         }
         let path = entry.path();

@@ -26,6 +26,9 @@ pub struct ScriptStats {
     pub action_words: usize,
     pub characters: Vec<CharacterStats>,
     pub locations: Vec<String>,
+    /// Estimated runtime from the format's timing profile (min/page).
+    #[serde(default)]
+    pub estimated_minutes: f32,
 }
 
 fn word_count(s: &str) -> usize {
@@ -131,8 +134,11 @@ pub fn compute(script: &Script, opts: &LayoutOptions) -> ScriptStats {
     let mut characters: Vec<CharacterStats> = chars.into_values().collect();
     characters.sort_by(|a, b| b.words.cmp(&a.words).then(a.name.cmp(&b.name)));
 
+    let minutes_per_page = opts.format.as_ref().map(|f| f.minutes_per_page).unwrap_or(1.0);
+
     ScriptStats {
         page_count: pm.page_count,
+        estimated_minutes: pm.page_count as f32 * minutes_per_page,
         scene_count,
         int_count,
         ext_count,

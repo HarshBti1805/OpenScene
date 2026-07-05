@@ -18,6 +18,9 @@ fn kind_to_fdx(kind: ElementKind) -> &'static str {
         ElementKind::Transition => "Transition",
         ElementKind::Shot => "Shot",
         ElementKind::PageBreak => "Action", // represented via StartsNewPage attr
+        ElementKind::Omitted => "Scene Heading", // + Omitted="Yes" attr
+        ElementKind::ActHeader => "New Act",
+        ElementKind::Lyrics => "Lyrics",
     }
 }
 
@@ -29,6 +32,8 @@ fn fdx_to_kind(t: &str) -> ElementKind {
         "Dialogue" => ElementKind::Dialogue,
         "Transition" => ElementKind::Transition,
         "Shot" => ElementKind::Shot,
+        "New Act" | "Act Break" | "End of Act" => ElementKind::ActHeader,
+        "Lyrics" => ElementKind::Lyrics,
         _ => ElementKind::Action,
     }
 }
@@ -95,10 +100,16 @@ pub fn export(script: &Script) -> String {
 
 fn write_paragraph(out: &mut String, e: &Element) {
     let mut attrs = format!(" Type=\"{}\"", kind_to_fdx(e.kind));
-    if e.kind == ElementKind::SceneHeading {
+    if e.kind == ElementKind::SceneHeading || e.kind == ElementKind::Omitted {
         if let Some(n) = &e.scene_number {
             attrs.push_str(&format!(" Number=\"{}\"", escape(n.as_str())));
         }
+    }
+    if e.kind == ElementKind::Omitted {
+        attrs.push_str(" Omitted=\"Yes\"");
+    }
+    if let Some(rev) = &e.revision {
+        attrs.push_str(&format!(" RevisionID=\"{}\"", escape(rev.as_str())));
     }
     out.push_str(&format!("<Paragraph{}>", attrs));
     out.push_str(&notes_xml(&e.notes));
@@ -240,9 +251,15 @@ pub fn import(xml: &str) -> Script {
                         starts_new_page = true;
                     }
                     let mut e = Element::new(fdx_to_kind(ptype), "");
-                    if e.kind == ElementKind::SceneHeading {
+                    if attr(&attrs, "Omitted").map(|v| v.eq_ignore_ascii_case("yes")) == Some(true) {
+                        e.kind = ElementKind::Omitted;
+                    }
+                    if e.kind == ElementKind::SceneHeading || e.kind == ElementKind::Omitted {
                         e.scene_number = attr(&attrs, "Number").map(|s| s.to_string());
                     }
+                    e.revision = attr(&attrs, "RevisionID")
+                        .filter(|v| !v.is_empty())
+                        .map(|s| s.to_string());
                     cur = Some(e);
                     cur_text.clear();
                 }
@@ -407,6 +424,43 @@ mod tests {
         rd.dual = Some(DualSide::Right);
         s.elements.extend([l, ld, r, rd]);
         let xml = export(&s);
+        let back = import(&xml);
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn fdx_round_trips_act_headers_and_lyrics() {
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::ActHeader, "ACT TWO"));
+        s.elements.push(Element::new(ElementKind::Lyrics, "Sing it now"));
+        let xml = export(&s);
+        let back = import(&xml);
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn fdx_round_trips_omitted_scenes() {
+        let mut s = Script::default();
+        s.elements.push(Element::new(ElementKind::SceneHeading, "INT. A - DAY"));
+        s.elements.push(Element::new(ElementKind::Action, "One."));
+        let mut om = Element::new(ElementKind::Omitted, "");
+        om.scene_number = Some("2".into());
+        s.elements.push(om);
+        let xml = export(&s);
+        assert!(xml.contains("Omitted=\"Yes\""));
+        let back = import(&xml);
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn fdx_round_trips_revision_ids() {
+        let mut s = Script::default();
+        let mut a = Element::new(ElementKind::Action, "Revised action.");
+        a.revision = Some("blue-1".into());
+        s.elements.push(a);
+        s.elements.push(Element::new(ElementKind::Action, "Untouched."));
+        let xml = export(&s);
+        assert!(xml.contains("RevisionID=\"blue-1\""));
         let back = import(&xml);
         assert_eq!(s, back);
     }
