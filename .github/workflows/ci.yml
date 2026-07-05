@@ -55,6 +55,8 @@ jobs:
     name: Build installers (${{ matrix.os }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -82,19 +84,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build installers
-        run: npm run tauri build
-
-      - name: Upload installers
-        uses: actions/upload-artifact@v4
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: openscene-${{ matrix.os }}
-          path: |
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.app.tar.gz
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.rpm
-            src-tauri/target/release/bundle/**/*.AppImage
-          if-no-files-found: warn
+          tagName: ${{ github.ref_name }}
+          releaseName: "OpenScene ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG or commit history for details. Installers below are unsigned — macOS will warn via Gatekeeper (right-click → Open) and Windows via SmartScreen (More info → Run anyway)."
+          releaseDraft: true
+          prerelease: false

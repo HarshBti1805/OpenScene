@@ -4,6 +4,16 @@ A completely free, open-source (MIT), **offline-first** professional screenwriti
 
 No accounts. No telemetry. No license checks. No network calls. No AI. No paid anything.
 
+## Download
+
+Prebuilt installers for macOS, Windows, and Linux are published on the [Releases page](https://github.com/HarshBti1805/OpenScene/releases).
+
+- **macOS**: download the `.dmg`. The app is unsigned, so on first launch right-click the app → **Open** to bypass Gatekeeper.
+- **Windows**: download the `.msi` or `.exe`. It's unsigned, so SmartScreen will show a warning — click **More info** → **Run anyway**.
+- **Linux**: download the `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora).
+
+Prefer to build it yourself? See [Development setup](#development-setup) below.
+
 ## What it does
 
 - **WYSIWYG paginated screenplay editing** — Courier 12pt, US Letter, industry margins, live page breaks computed by the same Rust engine that renders the PDF, so a page in the editor is a page on paper.
