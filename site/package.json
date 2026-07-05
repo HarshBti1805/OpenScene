@@ -1,0 +1,26 @@
+{
+  "name": "openscene-site",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Landing page for OpenScene — free, open-source, offline-first screenwriting",
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource/big-shoulders-display": "^5.2.5",
+    "@fontsource/courier-prime": "^5.2.8",
+    "next": "^15.3.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.8.3"
+  }
+}
