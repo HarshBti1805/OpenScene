@@ -4,7 +4,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "./api";
-import { useApp } from "./store";
+import { ACCENTS, THEMES, useApp } from "./store";
 import { t } from "./i18n";
 import { getEditorView, forceRepaginate, replaceEditorScript } from "./editor/editorRef";
 import { insertPageBreak, setElementKind, toggleDualDialogue } from "./editor/commands";
@@ -293,9 +293,16 @@ export function buildCommands(): AppCommand[] {
       run: () => app().setFormatOpen(true),
     },
     { id: "theme.system", title: t("cmd.themeSystem"), run: () => app().setThemePref("system") },
-    { id: "theme.light", title: t("cmd.themeLight"), run: () => app().setThemePref("light") },
-    { id: "theme.dark", title: t("cmd.themeDark"), run: () => app().setThemePref("dark") },
-    { id: "theme.midnight", title: t("cmd.themeMidnight"), run: () => app().setThemePref("midnight") },
+    ...THEMES.map((th) => ({
+      id: `theme.${th.id}`,
+      title: t("cmd.theme", { name: t(th.labelKey) }),
+      run: () => app().setThemePref(th.id),
+    })),
+    ...ACCENTS.map((a) => ({
+      id: `accent.${a.id}`,
+      title: t("cmd.accent", { name: t(a.labelKey) }),
+      run: () => app().setAccent(a.id),
+    })),
     numberingCmd("none"),
     numberingCmd("left"),
     numberingCmd("right"),

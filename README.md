@@ -87,6 +87,20 @@ Outputs land in `src-tauri/target/release/bundle/`:
 - Windows: `.msi` and `.exe` (NSIS)
 - Linux: `.deb`, `.rpm`, and `.AppImage`
 
+### "OpenScene is damaged and can't be opened" on macOS
+
+The app is fine — this is Gatekeeper. OpenScene has no paid anything, which
+includes the Apple Developer account required for notarization, so macOS
+refuses apps downloaded through a browser with this (misleading) message.
+After copying OpenScene.app to Applications, clear the quarantine flag once:
+
+```bash
+xattr -cr /Applications/OpenScene.app
+```
+
+Then it opens normally, now and forever. (On Windows, the equivalent is
+SmartScreen: choose "More info" → "Run anyway".)
+
 To regenerate platform icon sets from the base PNG: `npm run icons`.
 
 ## Running tests

@@ -55,7 +55,45 @@ always Courier at 10–11px with 0.08–0.3em tracking, uppercase.
 
 ## THEMES
 
-All three are tuned independently; none is an inversion of another.
+Nine themes, all tuned independently; none is an inversion of another. Each
+names a place on the lot. The original three (Dark, Light, Midnight) are the
+signal-amber core; the six added themes each carry their own accent, which the
+user can override globally (see "Appearance customization" below).
+
+| Theme | Place | Mode | Accent |
+|---|---|---|---|
+| `dark` | the grading suite (default) | dark | signal amber |
+| `light` | the production office | light | burnt amber |
+| `midnight` | the projection booth | dark | dim amber |
+| `writers-room` | the network writers' room | light | network blue `#175f9e` |
+| `matinee` | the movie palace | light | marquee brass `#8a5d00` |
+| `darkroom` | the photo darkroom | dark | safelight red `#e05a4e` (danger becomes amber) |
+| `noir` | black-and-white pictures | dark | silver `#d7d7dc` |
+| `greenroom` | the greenroom | dark | stage green `#63b56f` |
+| `blueprint` | the art department | dark | drafting blue `#5aa7e8` |
+
+Every theme defines the full token set in `src/styles.css`
+(`:root[data-theme="…"]`) and is registered in `THEMES` in `src/store.ts`,
+which drives the Format & Appearance swatches and the command palette entries
+— adding a theme is those two places plus a label in `src/i18n.ts`.
+
+## Appearance customization
+
+All persisted in localStorage, applied pre-bundle by the `index.html` inline
+script (no flash), and set as `:root` data attributes:
+
+- **Accent override** (`data-accent`): `signal` (keep the theme's own accent)
+  or amber / crimson / cyan / green / violet / silver. Light themes get
+  darker cuts of each accent so text-size uses hold ≥4.5:1. Registered in
+  `ACCENTS` in `src/store.ts`.
+- **Interface density** (`data-density="compact"`): tightens the `--os-space-*`
+  scale for chrome only; the page column layout is engine-owned and untouched.
+- **Reduce motion** (`data-motion="reduced"`): collapses all animation in-app,
+  mirroring `prefers-reduced-motion` for users who want stillness only here.
+- Plus the existing controls: page font, page zoom, UI zoom, line focus,
+  typewriter scrolling, cursor style, theme-follows-OS.
+
+The details of the original three:
 
 ### Dark — "the grading suite" (default)
 | Token | Value |
@@ -87,10 +125,10 @@ All three are tuned independently; none is an inversion of another.
 | page / page-ink | `#0e0d0a` / `#c9c3b1` |
 | danger | `#c25b48` |
 
-Theme preference (`system | light | dark | midnight`) persists in
-localStorage, follows the OS by default, applies pre-bundle via an inline
+Theme preference (`system` or any theme id) persists in localStorage, follows
+the OS by default (resolving to dark/light), applies pre-bundle via an inline
 script in `index.html` (no flash), and crossfades over 150ms
-(`.theme-switching`, colors only).
+(`.theme-switching`, colors only). Accent changes reuse the same crossfade.
 
 ## Motion
 

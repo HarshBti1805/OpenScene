@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { api } from "../api";
-import { PAGE_FONTS, useApp, type CursorStyle, type ThemePref } from "../store";
+import {
+  ACCENTS,
+  PAGE_FONTS,
+  THEMES,
+  useApp,
+  type CursorStyle,
+  type MotionPref,
+  type ThemePref,
+  type UiDensity,
+} from "../store";
 import { forceRepaginate } from "../editor/editorRef";
 import { saveUserTemplate } from "../templates";
 import { defaultFormatSpec, type ElementFormat, type FormatSpec, type SceneNumbering } from "../types";
@@ -33,10 +42,13 @@ const FORMAT_ELEMENTS: { key: keyof Pick<FormatSpec, "scene_heading" | "action" 
 ];
 
 const THEME_OPTIONS: { id: ThemePref; label: string; page: string; bg: string }[] = [
-  { id: "system", label: t("format.themeSystem"), page: "linear-gradient(105deg, #fdfbf3 50%, #201d16 50%)", bg: "linear-gradient(105deg, #ece5d4 50%, #16130e 50%)" },
-  { id: "light", label: t("format.themeLight"), page: "#fdfbf3", bg: "#ece5d4" },
-  { id: "dark", label: t("format.themeDark"), page: "#201d16", bg: "#16130e" },
-  { id: "midnight", label: t("format.themeMidnight"), page: "#0e0d0a", bg: "#0a0907" },
+  {
+    id: "system",
+    label: t("format.themeSystem"),
+    page: "linear-gradient(105deg, #fdfbf3 50%, #201d16 50%)",
+    bg: "linear-gradient(105deg, #ece5d4 50%, #16130e 50%)",
+  },
+  ...THEMES.map((th) => ({ id: th.id as ThemePref, label: t(th.labelKey), page: th.page, bg: th.bg })),
 ];
 
 export function FormatPanel() {
@@ -132,6 +144,30 @@ function AppearanceTab() {
         ))}
       </div>
 
+      <label className="field-label">{t("format.accent")}</label>
+      <div className="accent-swatches" role="radiogroup" aria-label={t("format.accent")}>
+        {ACCENTS.map((a) => (
+          <button
+            key={a.id}
+            className={`accent-swatch${s.accent === a.id ? " selected" : ""}`}
+            role="radio"
+            aria-checked={s.accent === a.id}
+            aria-label={t(a.labelKey)}
+            title={t(a.labelKey)}
+            onClick={() => s.setAccent(a.id)}
+          >
+            {a.id === "signal" ? (
+              <span className="accent-dot accent-dot-signal" aria-hidden="true" />
+            ) : (
+              <span className="accent-dot" style={{ background: a.swatch }} aria-hidden="true" />
+            )}
+          </button>
+        ))}
+      </div>
+      <p className="panel-hint" style={{ padding: 0, marginTop: 4 }}>
+        {t("format.accentHint")}
+      </p>
+
       <label className="field-label">{t("format.pageFont")}</label>
       {!currentFont.standard && (
         <div style={{ marginBottom: 8 }}>
@@ -200,6 +236,33 @@ function AppearanceTab() {
           <option value="accent">{t("format.cursorAmber")}</option>
           <option value="ink">{t("format.cursorInk")}</option>
         </select>
+      </div>
+      <div className="setting-row">
+        <span>
+          {t("format.density")}
+          <span className="setting-hint">{t("format.densityHint")}</span>
+        </span>
+        <select
+          className="input"
+          style={{ width: 130 }}
+          value={s.uiDensity}
+          aria-label={t("format.density")}
+          onChange={(e) => s.setUiDensity(e.target.value as UiDensity)}
+        >
+          <option value="comfortable">{t("format.densityComfortable")}</option>
+          <option value="compact">{t("format.densityCompact")}</option>
+        </select>
+      </div>
+      <div className="setting-row">
+        <span>
+          {t("format.motion")}
+          <span className="setting-hint">{t("format.motionHint")}</span>
+        </span>
+        <Switch
+          checked={s.motionPref === "reduced"}
+          onChange={(b) => s.setMotionPref(b ? ("reduced" as MotionPref) : "full")}
+          label={t("format.motion")}
+        />
       </div>
     </div>
   );

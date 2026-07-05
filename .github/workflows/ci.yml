@@ -88,9 +88,28 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional Developer ID signing + notarization: define these repo
+          # secrets and macOS builds are signed/notarized with no other change.
+          # Without them the bundle is ad-hoc signed (tauri.macos.conf.json).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # "-" = ad-hoc signing: gives the bundle a valid (unnotarized)
+          # signature so Gatekeeper's failure mode is the bypassable
+          # "unidentified developer" rather than a broken-bundle state.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OpenScene ${{ github.ref_name }}"
-          releaseBody: "See CHANGELOG or commit history for details. Installers below are unsigned — macOS will warn via Gatekeeper (right-click → Open) and Windows via SmartScreen (More info → Run anyway)."
+          releaseBody: |
+            Installers are not notarized with Apple or signed with a Microsoft certificate (OpenScene has no paid anything, including developer accounts).
+
+            **macOS**: Gatekeeper will claim the app "is damaged and can't be opened." It isn't damaged — it is unnotarized. After copying OpenScene.app to Applications, run:
+            ```
+            xattr -cr /Applications/OpenScene.app
+            ```
+            **Windows**: SmartScreen will warn — choose "More info" → "Run anyway".
           releaseDraft: true
           prerelease: false

@@ -5,20 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OpenScene</title>
     <script>
-      // Apply the persisted theme before the bundle loads to avoid a flash.
+      // Apply persisted appearance before the bundle loads to avoid a flash.
       (function () {
-        try {
-          var pref = JSON.parse(localStorage.getItem("openscene.themePref") || '"system"');
-          var resolved =
-            pref === "system"
-              ? window.matchMedia("(prefers-color-scheme: dark)").matches
-                ? "dark"
-                : "light"
-              : pref;
-          document.documentElement.setAttribute("data-theme", resolved);
-        } catch (e) {
-          document.documentElement.setAttribute("data-theme", "dark");
+        var root = document.documentElement;
+        function pref(key, fallback) {
+          try {
+            var v = localStorage.getItem("openscene." + key);
+            return v === null ? fallback : JSON.parse(v);
+          } catch (e) {
+            return fallback;
+          }
         }
+        var theme = pref("themePref", "system");
+        if (theme === "system") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        root.setAttribute("data-theme", theme);
+        var accent = pref("accent", "signal");
+        if (accent !== "signal") root.setAttribute("data-accent", accent);
+        if (pref("uiDensity", "comfortable") === "compact") root.setAttribute("data-density", "compact");
+        if (pref("motionPref", "full") === "reduced") root.setAttribute("data-motion", "reduced");
       })();
     </script>
   </head>

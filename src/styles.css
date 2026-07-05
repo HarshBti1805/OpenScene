@@ -155,6 +155,258 @@
   --os-scrim: rgba(0, 0, 0, 0.72);
 }
 
+/* ---- WRITERS ROOM: the network writers' room (cool light) ---------- */
+:root[data-theme="writers-room"] {
+  color-scheme: light;
+  --os-bg: #dfe3e8;
+  --os-surface: #eaedf1;
+  --os-surface-raised: #f5f7fa;
+  --os-ink: #1c2430;
+  --os-ink-muted: #5f6b7a;
+  --os-accent: #175f9e;
+  --os-accent-ink: #f2f8ff;
+  --os-accent-dim: rgba(23, 95, 158, 0.12);
+  --os-line: #c3cad4;
+  --os-line-strong: #a4aebc;
+  --os-page: #ffffff;
+  --os-page-ink: #1d2127;
+  --os-page-shadow: 0 3px 26px rgba(44, 58, 74, 0.2);
+  --os-danger: #b02a30;
+  --os-shadow-raise: 0 2px 6px rgba(44, 58, 74, 0.14);
+  --os-shadow-float: 0 18px 56px rgba(30, 42, 56, 0.28);
+  --os-scrim: rgba(20, 28, 38, 0.45);
+}
+
+/* ---- MATINEE: the movie palace (warm sepia light, marquee brass) ---- */
+:root[data-theme="matinee"] {
+  color-scheme: light;
+  --os-bg: #e8dcc8;
+  --os-surface: #f0e7d6;
+  --os-surface-raised: #f8f1e2;
+  --os-ink: #2b1f14;
+  --os-ink-muted: #7d6c55;
+  --os-accent: #8a5d00;
+  --os-accent-ink: #fff8e6;
+  --os-accent-dim: rgba(138, 93, 0, 0.13);
+  --os-line: #d3c5a8;
+  --os-line-strong: #b8a888;
+  --os-page: #fbf5e8;
+  --os-page-ink: #241c10;
+  --os-page-shadow: 0 3px 26px rgba(104, 82, 40, 0.24);
+  --os-danger: #b3361f;
+  --os-shadow-raise: 0 2px 6px rgba(104, 82, 40, 0.15);
+  --os-shadow-float: 0 18px 56px rgba(80, 62, 28, 0.3);
+  --os-scrim: rgba(62, 48, 22, 0.44);
+}
+
+/* ---- DARKROOM: the photo darkroom (safelight red) ------------------- */
+:root[data-theme="darkroom"] {
+  color-scheme: dark;
+  --os-bg: #120c0c;
+  --os-surface: #191010;
+  --os-surface-raised: #221616;
+  --os-ink: #e4d6d2;
+  --os-ink-muted: #9a8380;
+  --os-accent: #e05a4e;
+  --os-accent-ink: #1c0805;
+  --os-accent-dim: rgba(224, 90, 78, 0.14);
+  --os-line: #33211f;
+  --os-line-strong: #48302d;
+  --os-page: #1a1212;
+  --os-page-ink: #e2d4cf;
+  --os-page-shadow: 0 3px 32px rgba(0, 0, 0, 0.5);
+  --os-danger: #e8a33f; /* accent owns red here; warnings go amber */
+  --os-shadow-raise: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --os-shadow-float: 0 18px 56px rgba(0, 0, 0, 0.6);
+  --os-scrim: rgba(10, 4, 4, 0.64);
+}
+
+/* ---- NOIR: black-and-white pictures (monochrome, silver) ------------ */
+:root[data-theme="noir"] {
+  color-scheme: dark;
+  --os-bg: #0d0d0e;
+  --os-surface: #131315;
+  --os-surface-raised: #1b1b1e;
+  --os-ink: #ececec;
+  --os-ink-muted: #8f8f94;
+  --os-accent: #d7d7dc;
+  --os-accent-ink: #101012;
+  --os-accent-dim: rgba(215, 215, 220, 0.12);
+  --os-line: #26262a;
+  --os-line-strong: #3a3a40;
+  --os-page: #151517;
+  --os-page-ink: #e8e8e8;
+  --os-page-shadow: 0 3px 32px rgba(0, 0, 0, 0.6);
+  --os-danger: #d95f5f;
+  --os-shadow-raise: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --os-shadow-float: 0 18px 56px rgba(0, 0, 0, 0.7);
+  --os-scrim: rgba(0, 0, 0, 0.66);
+}
+
+/* ---- GREENROOM: the greenroom (deep stage green) --------------------- */
+:root[data-theme="greenroom"] {
+  color-scheme: dark;
+  --os-bg: #0e1410;
+  --os-surface: #141b16;
+  --os-surface-raised: #1c241d;
+  --os-ink: #dbe5d8;
+  --os-ink-muted: #8b9a88;
+  --os-accent: #63b56f;
+  --os-accent-ink: #06180b;
+  --os-accent-dim: rgba(99, 181, 111, 0.13);
+  --os-line: #243026;
+  --os-line-strong: #354538;
+  --os-page: #131a14;
+  --os-page-ink: #d8e2d4;
+  --os-page-shadow: 0 3px 32px rgba(0, 0, 0, 0.5);
+  --os-danger: #e26d5a;
+  --os-shadow-raise: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --os-shadow-float: 0 18px 56px rgba(0, 0, 0, 0.6);
+  --os-scrim: rgba(4, 10, 6, 0.64);
+}
+
+/* ---- BLUEPRINT: the art department (cool slate, drafting blue) ------- */
+:root[data-theme="blueprint"] {
+  color-scheme: dark;
+  --os-bg: #0e1319;
+  --os-surface: #131a22;
+  --os-surface-raised: #1a232e;
+  --os-ink: #d7e0ea;
+  --os-ink-muted: #7f8fa1;
+  --os-accent: #5aa7e8;
+  --os-accent-ink: #06121e;
+  --os-accent-dim: rgba(90, 167, 232, 0.13);
+  --os-line: #202c3a;
+  --os-line-strong: #2e3f52;
+  --os-page: #121924;
+  --os-page-ink: #d3dde8;
+  --os-page-shadow: 0 3px 32px rgba(0, 0, 0, 0.5);
+  --os-danger: #e26d5a;
+  --os-shadow-raise: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --os-shadow-float: 0 18px 56px rgba(0, 0, 0, 0.6);
+  --os-scrim: rgba(4, 8, 14, 0.64);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Accent override (data-accent): swaps the theme's hot accent.       */
+/*  Generic blocks are dark-tuned; light themes get a darker cut for   */
+/*  AA contrast. These sit after the theme blocks so they win.         */
+/* ------------------------------------------------------------------ */
+
+:root[data-accent="amber"] {
+  --os-accent: #f2a33c;
+  --os-accent-ink: #1c1509;
+  --os-accent-dim: rgba(242, 163, 60, 0.14);
+}
+
+:root[data-accent="crimson"] {
+  --os-accent: #e0564e;
+  --os-accent-ink: #1c0705;
+  --os-accent-dim: rgba(224, 86, 78, 0.14);
+}
+
+:root[data-accent="cyan"] {
+  --os-accent: #4db8e8;
+  --os-accent-ink: #06141c;
+  --os-accent-dim: rgba(77, 184, 232, 0.13);
+}
+
+:root[data-accent="green"] {
+  --os-accent: #6fbf73;
+  --os-accent-ink: #07180a;
+  --os-accent-dim: rgba(111, 191, 115, 0.13);
+}
+
+:root[data-accent="violet"] {
+  --os-accent: #b48ee8;
+  --os-accent-ink: #150a24;
+  --os-accent-dim: rgba(180, 142, 232, 0.13);
+}
+
+:root[data-accent="silver"] {
+  --os-accent: #d7d7dc;
+  --os-accent-ink: #101012;
+  --os-accent-dim: rgba(215, 215, 220, 0.12);
+}
+
+:root[data-theme="light"][data-accent="amber"],
+:root[data-theme="writers-room"][data-accent="amber"],
+:root[data-theme="matinee"][data-accent="amber"] {
+  --os-accent: #9c5300;
+  --os-accent-ink: #fff6e4;
+  --os-accent-dim: rgba(156, 83, 0, 0.12);
+}
+
+:root[data-theme="light"][data-accent="crimson"],
+:root[data-theme="writers-room"][data-accent="crimson"],
+:root[data-theme="matinee"][data-accent="crimson"] {
+  --os-accent: #a3252f;
+  --os-accent-ink: #fff3ec;
+  --os-accent-dim: rgba(163, 37, 47, 0.12);
+}
+
+:root[data-theme="light"][data-accent="cyan"],
+:root[data-theme="writers-room"][data-accent="cyan"],
+:root[data-theme="matinee"][data-accent="cyan"] {
+  --os-accent: #0f6a96;
+  --os-accent-ink: #f0faff;
+  --os-accent-dim: rgba(15, 106, 150, 0.12);
+}
+
+:root[data-theme="light"][data-accent="green"],
+:root[data-theme="writers-room"][data-accent="green"],
+:root[data-theme="matinee"][data-accent="green"] {
+  --os-accent: #1e7a33;
+  --os-accent-ink: #f0fff3;
+  --os-accent-dim: rgba(30, 122, 51, 0.12);
+}
+
+:root[data-theme="light"][data-accent="violet"],
+:root[data-theme="writers-room"][data-accent="violet"],
+:root[data-theme="matinee"][data-accent="violet"] {
+  --os-accent: #6d3fa8;
+  --os-accent-ink: #f8f2ff;
+  --os-accent-dim: rgba(109, 63, 168, 0.12);
+}
+
+:root[data-theme="light"][data-accent="silver"],
+:root[data-theme="writers-room"][data-accent="silver"],
+:root[data-theme="matinee"][data-accent="silver"] {
+  --os-accent: #5a5a66;
+  --os-accent-ink: #f5f5f8;
+  --os-accent-dim: rgba(90, 90, 102, 0.12);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Density (data-density="compact"): tighter chrome spacing.          */
+/*  The page is untouched — its layout belongs to the engine.          */
+/* ------------------------------------------------------------------ */
+
+:root[data-density="compact"] {
+  --os-space-1: 3px;
+  --os-space-2: 6px;
+  --os-space-3: 9px;
+  --os-space-4: 12px;
+  --os-space-5: 15px;
+  --os-space-6: 18px;
+  --os-space-7: 24px;
+  --os-space-8: 36px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  In-app reduced motion (data-motion="reduced"): mirrors the OS      */
+/*  media query for users who want a still UI on this app only.       */
+/* ------------------------------------------------------------------ */
+
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* Theme crossfade: chrome-only, never during typing (colors only). */
 :root.theme-switching,
 :root.theme-switching * {
@@ -2377,6 +2629,7 @@ body,
 
 .theme-swatches {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--os-space-2);
 }
 
@@ -2410,6 +2663,42 @@ body,
   inset: 7px 9px;
   background: repeating-linear-gradient(to bottom, currentColor 0 1.5px, transparent 1.5px 6px);
   opacity: 0.5;
+}
+
+/* Accent picker: color dots; "signal" (theme default) is a split dot. */
+.accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--os-space-2);
+}
+
+.accent-swatch {
+  border: 2px solid var(--os-line);
+  border-radius: 50%;
+  padding: 3px;
+  cursor: pointer;
+  background: none;
+  line-height: 0;
+  transition: border-color var(--os-motion-fast) var(--os-ease), transform var(--os-motion-fast) var(--os-ease);
+}
+
+.accent-swatch:hover {
+  transform: translateY(-2px);
+}
+
+.accent-swatch.selected {
+  border-color: var(--os-accent);
+}
+
+.accent-dot {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.accent-dot-signal {
+  background: conic-gradient(#f2a33c 0 50%, #d7d7dc 50% 100%);
 }
 
 .theme-swatch .swatch-label {

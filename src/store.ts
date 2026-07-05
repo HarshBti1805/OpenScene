@@ -17,12 +17,56 @@ import type {
 // Design-language: "Backlot" — see DESIGN.md. Theme + appearance settings.
 // ---------------------------------------------------------------------------
 
-export type ThemePref = "system" | "light" | "dark" | "midnight";
-export type ResolvedTheme = "light" | "dark" | "midnight";
+export type ThemeId =
+  | "light"
+  | "dark"
+  | "midnight"
+  | "writers-room"
+  | "matinee"
+  | "darkroom"
+  | "noir"
+  | "greenroom"
+  | "blueprint";
+export type ThemePref = "system" | ThemeId;
+export type ResolvedTheme = ThemeId;
+export type AccentId = "signal" | "amber" | "crimson" | "cyan" | "green" | "violet" | "silver";
+export type UiDensity = "comfortable" | "compact";
+export type MotionPref = "full" | "reduced";
 export type PageFont = "courier-prime" | "courier-prime-sans" | "opendyslexic" | "system-mono";
 export type CursorStyle = "accent" | "ink" | "block";
 export type PanelName = "navigator" | "notes" | "stats" | "snapshots" | "revisions";
 export type MainView = "start" | "write" | "cards" | "note";
+
+/** Theme registry: ids + swatch colors for pickers (values mirror styles.css). */
+export const THEMES: {
+  id: ThemeId;
+  labelKey: string;
+  /** App background / page color for the preview swatch. */
+  bg: string;
+  page: string;
+  dark: boolean;
+}[] = [
+  { id: "light", labelKey: "format.themeLight", bg: "#ece5d4", page: "#fdfbf3", dark: false },
+  { id: "writers-room", labelKey: "format.themeWritersRoom", bg: "#dfe3e8", page: "#ffffff", dark: false },
+  { id: "matinee", labelKey: "format.themeMatinee", bg: "#e8dcc8", page: "#fbf5e8", dark: false },
+  { id: "dark", labelKey: "format.themeDark", bg: "#16130e", page: "#201d16", dark: true },
+  { id: "greenroom", labelKey: "format.themeGreenroom", bg: "#0e1410", page: "#131a14", dark: true },
+  { id: "blueprint", labelKey: "format.themeBlueprint", bg: "#0e1319", page: "#121924", dark: true },
+  { id: "darkroom", labelKey: "format.themeDarkroom", bg: "#120c0c", page: "#1a1212", dark: true },
+  { id: "noir", labelKey: "format.themeNoir", bg: "#0d0d0e", page: "#151517", dark: true },
+  { id: "midnight", labelKey: "format.themeMidnight", bg: "#0a0907", page: "#0e0d0a", dark: true },
+];
+
+/** Accent registry: "signal" keeps the theme's own accent (no override). */
+export const ACCENTS: { id: AccentId; labelKey: string; swatch: string }[] = [
+  { id: "signal", labelKey: "format.accentSignal", swatch: "#f2a33c" },
+  { id: "amber", labelKey: "format.accentAmber", swatch: "#e8a33f" },
+  { id: "crimson", labelKey: "format.accentCrimson", swatch: "#e0564e" },
+  { id: "cyan", labelKey: "format.accentCyan", swatch: "#4db8e8" },
+  { id: "green", labelKey: "format.accentGreen", swatch: "#6fbf73" },
+  { id: "violet", labelKey: "format.accentViolet", swatch: "#b48ee8" },
+  { id: "silver", labelKey: "format.accentSilver", swatch: "#d7d7dc" },
+];
 
 /** Which document the script editor is editing. */
 export type ActiveDoc = { kind: "script" } | { kind: "draft"; name: string };
@@ -88,6 +132,27 @@ function applyTheme(pref: ThemePref) {
   window.setTimeout(() => root.classList.remove("theme-switching"), 220);
 }
 
+/** Accent override; "signal" removes the attribute so the theme's own accent wins. */
+function applyAccent(accent: AccentId) {
+  const root = document.documentElement;
+  root.classList.add("theme-switching");
+  if (accent === "signal") root.removeAttribute("data-accent");
+  else root.setAttribute("data-accent", accent);
+  window.setTimeout(() => root.classList.remove("theme-switching"), 220);
+}
+
+function applyDensity(density: UiDensity) {
+  const root = document.documentElement;
+  if (density === "comfortable") root.removeAttribute("data-density");
+  else root.setAttribute("data-density", density);
+}
+
+function applyMotion(motion: MotionPref) {
+  const root = document.documentElement;
+  if (motion === "full") root.removeAttribute("data-motion");
+  else root.setAttribute("data-motion", motion);
+}
+
 function applyPageAppearance(font: PageFont, zoom: number, cursor: CursorStyle) {
   const root = document.documentElement;
   const def = PAGE_FONTS.find((f) => f.id === font) ?? PAGE_FONTS[0];
@@ -108,6 +173,9 @@ interface AppState {
 
   // Appearance settings (Backlot / Format & Appearance panel)
   themePref: ThemePref;
+  accent: AccentId;
+  uiDensity: UiDensity;
+  motionPref: MotionPref;
   pageFont: PageFont;
   pageZoom: number;
   uiZoom: number;
@@ -146,6 +214,9 @@ interface AppState {
   scenes: () => SceneInfo[];
   setView: (v: MainView) => void;
   setThemePref: (t: ThemePref) => void;
+  setAccent: (a: AccentId) => void;
+  setUiDensity: (d: UiDensity) => void;
+  setMotionPref: (m: MotionPref) => void;
   setPageFont: (f: PageFont) => void;
   setPageZoom: (z: number) => void;
   setUiZoom: (z: number) => void;
@@ -204,6 +275,9 @@ export const useApp = create<AppState>((set, get) => ({
   sceneNumbering: "none",
 
   themePref: loadPref<ThemePref>("themePref", "system"),
+  accent: loadPref<AccentId>("accent", "signal"),
+  uiDensity: loadPref<UiDensity>("uiDensity", "comfortable"),
+  motionPref: loadPref<MotionPref>("motionPref", "full"),
   pageFont: loadPref<PageFont>("pageFont", "courier-prime"),
   pageZoom: loadPref<number>("pageZoom", 1),
   uiZoom: loadPref<number>("uiZoom", 1),
@@ -253,6 +327,21 @@ export const useApp = create<AppState>((set, get) => ({
     savePref("themePref", t);
     applyTheme(t);
     set({ themePref: t });
+  },
+  setAccent: (a) => {
+    savePref("accent", a);
+    applyAccent(a);
+    set({ accent: a });
+  },
+  setUiDensity: (d) => {
+    savePref("uiDensity", d);
+    applyDensity(d);
+    set({ uiDensity: d });
+  },
+  setMotionPref: (m) => {
+    savePref("motionPref", m);
+    applyMotion(m);
+    set({ motionPref: m });
   },
   setPageFont: (f) => {
     savePref("pageFont", f);
@@ -526,7 +615,11 @@ export function lastOpenedAt(path: string): number | null {
 // Apply persisted appearance on module load; follow OS theme changes live.
 {
   const s = useApp.getState();
-  document.documentElement.setAttribute("data-theme", resolveTheme(s.themePref));
+  const root = document.documentElement;
+  root.setAttribute("data-theme", resolveTheme(s.themePref));
+  if (s.accent !== "signal") root.setAttribute("data-accent", s.accent);
+  applyDensity(s.uiDensity);
+  applyMotion(s.motionPref);
   applyPageAppearance(s.pageFont, s.pageZoom, s.cursorStyle);
   document.documentElement.style.setProperty("--os-ui-zoom", String(s.uiZoom));
   systemDark?.addEventListener?.("change", () => {
