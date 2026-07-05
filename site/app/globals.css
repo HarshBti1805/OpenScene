@@ -1099,20 +1099,89 @@ a {
   margin: 0 0 var(--os-space-2);
 }
 
-.dl-formats {
-  color: var(--os-ink-muted);
-  font-family: var(--os-font-mono);
-  font-size: var(--os-text-xs);
-  letter-spacing: 0.1em;
-  margin: 0 0 auto;
-  line-height: 1.8;
-}
-
 .dl-note {
   color: var(--os-ink-muted);
   font-size: var(--os-text-xs);
   line-height: 1.55;
-  margin: var(--os-space-3) 0 var(--os-space-4);
+  margin: 0 0 var(--os-space-4);
+}
+
+/* Direct-download asset rows */
+.dl-assets {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--os-space-2);
+}
+
+.dl-assets-loading {
+  font-family: var(--os-font-mono);
+  font-size: var(--os-text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--os-ink-muted);
+  animation: os-caret 1.4s steps(1) infinite;
+}
+
+.dl-asset {
+  display: flex;
+  align-items: center;
+  gap: var(--os-space-3);
+  background: var(--os-surface-raised);
+  border-radius: var(--os-radius-md);
+  padding: 10px 14px;
+  text-decoration: none;
+  color: var(--os-ink);
+  transition:
+    background var(--os-motion-fast) var(--os-ease),
+    color var(--os-motion-fast) var(--os-ease),
+    transform var(--os-motion-fast) var(--os-ease);
+}
+
+.dl-asset:hover {
+  background: var(--os-accent);
+  color: var(--os-accent-ink);
+  transform: translateX(3px);
+}
+
+.dl-asset-ext {
+  font-family: var(--os-font-mono);
+  font-size: var(--os-text-xs);
+  letter-spacing: 0.06em;
+  color: var(--os-accent);
+  min-width: 8ch;
+}
+
+.dl-asset:hover .dl-asset-ext,
+.dl-asset:hover .dl-asset-size {
+  color: var(--os-accent-ink);
+}
+
+.dl-asset-label {
+  font-size: var(--os-text-sm);
+  font-weight: 600;
+  flex: 1;
+}
+
+.dl-asset-size {
+  font-family: var(--os-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--os-ink-muted);
+}
+
+.dl-asset-arrow {
+  font-size: var(--os-text-md);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity var(--os-motion-fast) var(--os-ease),
+    transform var(--os-motion-fast) var(--os-ease);
+}
+
+.dl-asset:hover .dl-asset-arrow {
+  opacity: 1;
+  transform: none;
 }
 
 .dl-under {
